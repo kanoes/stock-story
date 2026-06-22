@@ -1,4 +1,4 @@
-# freeWorkSpce
+# stock-story
 
 一个面向手机网页的个人交易账本。
 
