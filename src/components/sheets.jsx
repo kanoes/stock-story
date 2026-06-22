@@ -433,7 +433,10 @@ export function CsvImportPreviewSheet({
             </div>
             <div className="list-card-meta">
               <span>税额合计 {taxTotal ? formatMoney(-taxTotal) : '无'}</span>
-              <span>忽略投信 {summary.skippedInvestmentTrust || 0} 行</span>
+              <span>税务明细 {summary.matchedTaxDetailRows || 0}/{summary.taxDetailRows || 0}</span>
+              <span>投信导入 {summary.importedInvestmentTrustRows || 0} 行</span>
+              <span>現引转换 {summary.importedConversionRows || 0} 行</span>
+              {summary.skippedInvestmentTrust ? <span>忽略投信 {summary.skippedInvestmentTrust} 行</span> : null}
               <span>不支持 {summary.skippedUnsupported || 0} 行</span>
             </div>
           </article>

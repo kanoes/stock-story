@@ -645,6 +645,9 @@ export function SettingsTab({
           <StatCard label="导入交易" value={importSummary ? String(importSummary.importedRows || 0) : '0'} />
           <StatCard label="信用补充" value={marginImport ? `${importSummary.matchedMarginSettlementRows || 0}/${marginImport.importedRows || 0}` : '0/0'} />
           <StatCard label="税额对账" value={taxTotal ? formatMoney(-taxTotal) : '无'} tone={taxTotal ? 'negative' : 'neutral'} />
+          <StatCard label="税务明细" value={importSummary?.taxDetailRows ? `${importSummary.matchedTaxDetailRows || 0}/${importSummary.taxDetailRows}` : '0/0'} />
+          <StatCard label="投信导入" value={importSummary?.importedInvestmentTrustRows ? String(importSummary.importedInvestmentTrustRows) : '0'} />
+          <StatCard label="現引转换" value={importSummary?.importedConversionRows ? String(importSummary.importedConversionRows) : '0'} />
           <StatCard label="CSV 文件" value={importSummary?.fileCount ? String(importSummary.fileCount) : '0'} />
         </div>
       </section>

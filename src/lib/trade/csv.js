@@ -19,6 +19,9 @@ const CSV_KIND = {
   UNKNOWN: 'unknown'
 };
 
+const INVESTMENT_TRUST_PRICE_SCALE = 10000;
+const GENBIKI_TRADE_TYPE = '現引';
+
 function parseCsvRows(text) {
   const rows = [];
   let row = [];
@@ -137,6 +140,106 @@ function numberKey(value) {
   return amount == null ? '' : String(amount);
 }
 
+function quantityKey(value) {
+  return numberKey(trimText(value).replace(/[^\d.+-]/g, ''));
+}
+
+function optionalNumber(value) {
+  const amount = safeNumber(value);
+  return amount == null ? '' : amount;
+}
+
+function optionalSignedNumber(value) {
+  const amount = toSignedNumber(value);
+  return amount == null ? '' : amount;
+}
+
+function positiveSettlementAmount(record) {
+  const amount = toSignedNumber(record['受渡金額/決済損益']);
+  return amount == null ? '' : Math.abs(amount);
+}
+
+function investmentTrustPrice(record) {
+  const price = safeNumber(record['約定単価']);
+  return price == null ? '' : price / INVESTMENT_TRUST_PRICE_SCALE;
+}
+
+function stableTextHash(value) {
+  let hash = 0;
+  const text = compactText(value);
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash * 31) + text.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36).toUpperCase();
+}
+
+function investmentTrustSymbol(record) {
+  const code = compactText(record['銘柄コード']);
+  if (code) return code;
+  return `FUND-${stableTextHash(record['銘柄'] || 'investment-trust')}`;
+}
+
+function isGenbikiTradeType(rawTradeType) {
+  return trimText(rawTradeType) === GENBIKI_TRADE_TYPE;
+}
+
+function inferProductType(manualType, override = '') {
+  if (override) return override;
+  return manualType.startsWith('fund_') ? 'fund' : 'stock';
+}
+
+function buildImportedTrade({
+  record,
+  date,
+  settings,
+  manualType,
+  baseSignature,
+  ordinal,
+  entryKey = '',
+  marginDetail = null,
+  overrides = {}
+}) {
+  const config = MANUAL_TYPE_MAP[manualType];
+  const productType = inferProductType(manualType, overrides.productType);
+  const fingerprintSignature = entryKey ? `${baseSignature}:${entryKey}` : baseSignature;
+  const market = normalizeMarketKey(overrides.market ?? record['市場']);
+
+  return normalizeTrade({
+    id: generateId(),
+    source: 'csv',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    manualType,
+    assetType: overrides.assetType || config.assetType,
+    action: overrides.action || config.action,
+    positionEffect: overrides.positionEffect || config.positionEffect,
+    positionSide: overrides.positionSide || config.positionSide,
+    symbol: overrides.symbol ?? compactText(record['銘柄コード']),
+    name: overrides.name ?? trimText(record['銘柄']),
+    market,
+    marketLabel: trimText(overrides.marketLabel ?? (record['市場'] || marketLabelFromKey(market))),
+    productType,
+    tradeTypeLabel: overrides.tradeTypeLabel || trimText(record['取引']),
+    term: trimText(overrides.term ?? (record['期限'] || '--')),
+    custody: trimText(overrides.custody ?? (record['預り'] || '特定')),
+    taxCategory: trimText(overrides.taxCategory ?? (record['課税'] || '--')),
+    quantity: overrides.quantity ?? optionalNumber(record['約定数量']),
+    price: overrides.price ?? (productType === 'fund' ? investmentTrustPrice(record) : optionalNumber(record['約定単価'])),
+    fee: overrides.fee ?? optionalNumber(record['手数料/諸経費等']),
+    taxAmount: overrides.taxAmount ?? optionalNumber(record['税額']),
+    holdingCost: overrides.holdingCost ?? '',
+    reportedProfit: overrides.reportedProfit ?? '',
+    settlementDate: normalizeAnyDate(overrides.settlementDate ?? record['受渡日']) || marginDetail?.marginSettlement.settlementDate || '',
+    settlementAmount: overrides.settlementAmount ?? optionalSignedNumber(record['受渡金額/決済損益']),
+    marginSettlement: overrides.marginSettlement ?? marginDetail?.marginSettlement ?? null,
+    taxDetail: overrides.taxDetail ?? null,
+    notes: overrides.notes || '',
+    fingerprint: `${fingerprintSignature}#${ordinal}`,
+    csvBaseSignature: fingerprintSignature,
+    ratioSnapshot: cloneActiveRuleSnapshot(settings, config.assetType)
+  }, date, Number(overrides.order ?? ordinal) || 0, settings);
+}
+
 function buildCsvBaseSignature(record, normalizedDate) {
   const columns = [
     normalizedDate,
@@ -167,6 +270,32 @@ function buildExecutionMarginCloseKey(record, date) {
     numberKey(record['約定単価']),
     normalizeAnyDate(record['受渡日']) || '',
     numberKey(record['受渡金額/決済損益'])
+  ].join('|');
+}
+
+function taxMatchSymbol(record) {
+  return compactText(record['銘柄コード']) || compactText(record['銘柄']);
+}
+
+function buildExecutionTaxDetailKey(record, date) {
+  return [
+    date,
+    taxMatchSymbol(record),
+    trimText(record['取引']),
+    quantityKey(record['約定数量']),
+    normalizeAnyDate(record['受渡日']) || '',
+    numberKey(record['受渡金額/決済損益'])
+  ].join('|');
+}
+
+function buildTaxDetailKey(record, date) {
+  return [
+    date,
+    taxMatchSymbol(record),
+    trimText(record['取引']),
+    quantityKey(record['数量']),
+    normalizeAnyDate(record['受渡日']) || '',
+    numberKey(record['売却/決済金額'])
   ].join('|');
 }
 
@@ -266,18 +395,43 @@ function parseTaxPeriod(rows) {
 
 function parseTaxCsv(rows) {
   const { records } = getRecordsAfterHeader(rows, '銘柄コード');
-  const tradeRows = records.filter((record) => trimText(record['銘柄コード']) && trimText(record['銘柄コード']) !== '譲渡益税徴収額');
+  const tradeRows = records.filter((record) => {
+    const code = trimText(record['銘柄コード']);
+    if (code === '譲渡益税徴収額') return false;
+    return Boolean(code || trimText(record['銘柄'])) && Boolean(trimText(record['取引']));
+  });
   const taxRows = records.filter((record) => trimText(record['銘柄コード']) === '譲渡益税徴収額');
   const period = parseTaxPeriod(rows);
+  const details = tradeRows.map((record) => {
+    const date = normalizeAnyDate(record['約定日']);
+    const profit = toSignedNumber(record['損益金額/徴収額']);
+    if (!date || !trimText(record['取引']) || profit == null) return null;
+
+    return {
+      key: buildTaxDetailKey(record, date),
+      reportedProfit: profit,
+      taxDetail: {
+        source: CSV_KIND.TAX_DETAILS,
+        settlementDate: normalizeAnyDate(record['受渡日']) || '',
+        sellAmount: safeNumber(record['売却/決済金額']) ?? '',
+        fee: safeNumber(record['費用']) ?? '',
+        acquisitionDate: normalizeAnyDate(record['取得/新規年月日']) || '',
+        acquisitionAmount: safeNumber(record['取得/新規金額']) ?? '',
+        profit
+      }
+    };
+  }).filter(Boolean);
 
   const totalProfit = tradeRows.reduce((sum, record) => sum + (toSignedNumber(record['損益金額/徴収額']) || 0), 0);
   const incomeTax = taxRows.reduce((sum, record) => sum + (toSignedNumber(record['損益金額/徴収額']) || 0), 0);
   const localTax = taxRows.reduce((sum, record) => sum + (toSignedNumber(record['地方税']) || 0), 0);
 
   return {
+    details,
     summary: {
       ...period,
       rows: records.length,
+      importedRows: details.length,
       tradeRows: tradeRows.length,
       taxRows: taxRows.length,
       totalProfit,
@@ -288,15 +442,39 @@ function parseTaxCsv(rows) {
   };
 }
 
-function parseExecutionRecords(records, settings, marginSettlementQueues, sharedSeen) {
+function buildTaxDetailQueues(details) {
+  const queues = new Map();
+
+  details.forEach((detail) => {
+    const queue = queues.get(detail.key) || [];
+    queue.push(detail);
+    queues.set(detail.key, queue);
+  });
+
+  return queues;
+}
+
+function consumeTaxDetail(queues, record, date) {
+  const key = buildExecutionTaxDetailKey(record, date);
+  const queue = queues.get(key);
+  if (!queue?.length) return null;
+  return queue.shift();
+}
+
+function parseExecutionRecords(records, settings, marginSettlementQueues, taxDetailQueues, sharedSeen) {
   const trades = [];
   const summary = {
     totalRows: records.length,
     importedRows: 0,
+    importedSourceRows: 0,
+    importedInvestmentTrustRows: 0,
+    importedConversionRows: 0,
+    generatedConversionTrades: 0,
     skippedInvestmentTrust: 0,
     skippedUnsupported: 0,
     skippedEmpty: 0,
-    matchedMarginSettlementRows: 0
+    matchedMarginSettlementRows: 0,
+    matchedTaxDetailRows: 0
   };
 
   records.forEach((record) => {
@@ -308,13 +486,13 @@ function parseExecutionRecords(records, settings, marginSettlementQueues, shared
       return;
     }
 
-    if (rawTradeType.includes('投信')) {
-      summary.skippedInvestmentTrust += 1;
-      return;
-    }
-
     const descriptor = describeTradeType(rawTradeType);
-    if (!descriptor.supported) {
+    const isGenbiki = isGenbikiTradeType(rawTradeType);
+    if (!descriptor.supported && !isGenbiki) {
+      if (rawTradeType.includes('投信')) {
+        summary.skippedInvestmentTrust += 1;
+        return;
+      }
       summary.skippedUnsupported += 1;
       return;
     }
@@ -329,11 +507,72 @@ function parseExecutionRecords(records, settings, marginSettlementQueues, shared
     const ordinal = (sharedSeen.get(baseSignature) || 0) + 1;
     sharedSeen.set(baseSignature, ordinal);
 
+    if (isGenbiki) {
+      const transferCost = positiveSettlementAmount(record)
+        || ((optionalNumber(record['約定数量']) || 0) * (optionalNumber(record['約定単価']) || 0))
+          + (optionalNumber(record['手数料/諸経費等']) || 0)
+          + (optionalNumber(record['税額']) || 0);
+      const fee = optionalNumber(record['手数料/諸経費等']);
+
+      trades.push({
+        date,
+        trade: buildImportedTrade({
+          record,
+          date,
+          settings,
+          manualType: 'margin_close_long',
+          baseSignature,
+          ordinal,
+          entryKey: 'genbiki-margin-close',
+          overrides: {
+            tradeTypeLabel: '現引（信用決済）',
+            settlementAmount: 0,
+            marginSettlement: fee === ''
+              ? null
+              : {
+                  source: CSV_KIND.EXECUTIONS,
+                  settlementDate: normalizeAnyDate(record['受渡日']) || '',
+                  totalExpenses: fee,
+                  interestAmount: fee
+                },
+            notes: '現引转换：减少信用买建，不确认交易损益。',
+            order: ordinal * 2 - 1
+          }
+        })
+      });
+      trades.push({
+        date,
+        trade: buildImportedTrade({
+          record,
+          date,
+          settings,
+          manualType: 'spot_buy',
+          baseSignature,
+          ordinal,
+          entryKey: 'genbiki-cash-open',
+          overrides: {
+            tradeTypeLabel: '現引（現物化）',
+            settlementAmount: transferCost,
+            notes: '現引转换：以受渡金额作为现物取得成本。',
+            order: ordinal * 2
+          }
+        })
+      });
+
+      summary.importedSourceRows += 1;
+      summary.importedConversionRows += 1;
+      summary.generatedConversionTrades += 2;
+      return;
+    }
+
     const manualType = descriptor.manualType;
     const config = MANUAL_TYPE_MAP[manualType];
     const market = normalizeMarketKey(record['市場']);
     const marginDetail = config.assetType === 'margin' && config.positionEffect === 'close'
       ? consumeMarginSettlement(marginSettlementQueues, record, date)
+      : null;
+    const taxDetail = config.assetType === 'cash' && config.positionEffect === 'close'
+      ? consumeTaxDetail(taxDetailQueues, record, date)
       : null;
     const settlementAmount = safeNumber(record['受渡金額/決済損益'])
       ?? marginDetail?.settlementAmount
@@ -342,40 +581,42 @@ function parseExecutionRecords(records, settings, marginSettlementQueues, shared
     if (marginDetail) {
       summary.matchedMarginSettlementRows += 1;
     }
+    if (taxDetail) {
+      summary.matchedTaxDetailRows += 1;
+    }
 
     trades.push({
       date,
-      trade: normalizeTrade({
-        id: generateId(),
-        source: 'csv',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      trade: buildImportedTrade({
+        record,
+        date,
+        settings,
         manualType,
-        assetType: config.assetType,
-        action: config.action,
-        positionEffect: config.positionEffect,
-        positionSide: config.positionSide,
-        symbol: compactText(record['銘柄コード']),
-        name: trimText(record['銘柄']),
-        market,
-        marketLabel: trimText(record['市場'] || marketLabelFromKey(market)),
-        tradeTypeLabel: rawTradeType,
-        term: trimText(record['期限'] || '--'),
-        custody: trimText(record['預り'] || '特定'),
-        taxCategory: trimText(record['課税'] || '--'),
-        quantity: safeNumber(record['約定数量']) ?? '',
-        price: safeNumber(record['約定単価']) ?? '',
-        fee: safeNumber(record['手数料/諸経費等']) ?? '',
-        taxAmount: safeNumber(record['税額']) ?? '',
-        settlementDate: normalizeAnyDate(record['受渡日']) || marginDetail?.marginSettlement.settlementDate || '',
-        settlementAmount,
-        marginSettlement: marginDetail?.marginSettlement || null,
-        notes: '',
-        fingerprint: `${baseSignature}#${ordinal}`,
-        csvBaseSignature: baseSignature,
-        ratioSnapshot: cloneActiveRuleSnapshot(settings, config.assetType)
-      }, date, ordinal, settings)
+        baseSignature,
+        ordinal,
+        marginDetail,
+        overrides: manualType.startsWith('fund_')
+          ? {
+              symbol: investmentTrustSymbol(record),
+              productType: 'fund',
+              price: investmentTrustPrice(record),
+              settlementAmount: positiveSettlementAmount(record),
+              reportedProfit: taxDetail?.reportedProfit ?? '',
+              taxDetail: taxDetail?.taxDetail ?? null
+            }
+          : {
+              market,
+              settlementAmount,
+              reportedProfit: taxDetail?.reportedProfit ?? '',
+              taxDetail: taxDetail?.taxDetail ?? null
+            }
+      })
     });
+
+    summary.importedSourceRows += 1;
+    if (manualType.startsWith('fund_')) {
+      summary.importedInvestmentTrustRows += 1;
+    }
   });
 
   summary.importedRows = trades.length;
@@ -396,10 +637,15 @@ function mergeSummaries(left, right) {
   return {
     totalRows: left.totalRows + right.totalRows,
     importedRows: left.importedRows + right.importedRows,
+    importedSourceRows: (left.importedSourceRows || 0) + (right.importedSourceRows || 0),
+    importedInvestmentTrustRows: (left.importedInvestmentTrustRows || 0) + (right.importedInvestmentTrustRows || 0),
+    importedConversionRows: (left.importedConversionRows || 0) + (right.importedConversionRows || 0),
+    generatedConversionTrades: (left.generatedConversionTrades || 0) + (right.generatedConversionTrades || 0),
     skippedInvestmentTrust: left.skippedInvestmentTrust + right.skippedInvestmentTrust,
     skippedUnsupported: left.skippedUnsupported + right.skippedUnsupported,
     skippedEmpty: left.skippedEmpty + right.skippedEmpty,
-    matchedMarginSettlementRows: left.matchedMarginSettlementRows + right.matchedMarginSettlementRows
+    matchedMarginSettlementRows: left.matchedMarginSettlementRows + right.matchedMarginSettlementRows,
+    matchedTaxDetailRows: (left.matchedTaxDetailRows || 0) + (right.matchedTaxDetailRows || 0)
   };
 }
 
@@ -422,6 +668,9 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
   const marginSettlementResults = marginSettlementFiles.map((file) => parseMarginSettlementCsv(file.rows));
   const marginSettlementDetails = marginSettlementResults.flatMap((result) => result.details);
   const marginSettlementQueues = buildMarginSettlementQueues(marginSettlementDetails);
+  const taxResults = taxFiles.map((file) => parseTaxCsv(file.rows));
+  const taxDetails = taxResults.flatMap((result) => result.details);
+  const taxDetailQueues = buildTaxDetailQueues(taxDetails);
   const sharedSeen = new Map();
 
   let parsed = {
@@ -429,16 +678,21 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
     summary: {
       totalRows: 0,
       importedRows: 0,
+      importedSourceRows: 0,
+      importedInvestmentTrustRows: 0,
+      importedConversionRows: 0,
+      generatedConversionTrades: 0,
       skippedInvestmentTrust: 0,
       skippedUnsupported: 0,
       skippedEmpty: 0,
-      matchedMarginSettlementRows: 0
+      matchedMarginSettlementRows: 0,
+      matchedTaxDetailRows: 0
     }
   };
 
   executionFiles.forEach((file) => {
     const { records } = getRecordsAfterHeader(file.rows, '約定日');
-    const result = parseExecutionRecords(records, settings, marginSettlementQueues, sharedSeen);
+    const result = parseExecutionRecords(records, settings, marginSettlementQueues, taxDetailQueues, sharedSeen);
     parsed = {
       trades: [...parsed.trades, ...result.trades],
       summary: mergeSummaries(parsed.summary, result.summary)
@@ -449,7 +703,7 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
     throw new Error('CSV 里没有可导入的现物或信用交易。');
   }
 
-  const taxSummaries = taxFiles.map((file) => parseTaxCsv(file.rows).summary);
+  const taxSummaries = taxResults.map((result) => result.summary);
   const marginSettlementSummary = marginSettlementResults.reduce((accumulator, result) => ({
     rows: accumulator.rows + result.summary.rows,
     importedRows: accumulator.importedRows + result.summary.importedRows,
@@ -525,6 +779,8 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
         ...marginSettlementSummary,
         unmatchedRows: Math.max(0, marginSettlementSummary.importedRows - parsed.summary.matchedMarginSettlementRows)
       },
+      taxDetailRows: taxDetails.length,
+      unmatchedTaxDetailRows: Math.max(0, taxDetails.length - parsed.summary.matchedTaxDetailRows),
       taxDetails: taxSummaries
     }
   };

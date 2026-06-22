@@ -50,6 +50,22 @@ function normalizeMarginSettlement(rawDetail) {
   return Object.values(detail).some((value) => value !== '' && value != null) ? detail : null;
 }
 
+function normalizeTaxDetail(rawDetail) {
+  if (!rawDetail || typeof rawDetail !== 'object') return null;
+
+  const detail = {
+    source: trimText(rawDetail.source || ''),
+    settlementDate: normalizeAnyDate(rawDetail.settlementDate) || '',
+    sellAmount: normalizeOptionalNumber(rawDetail.sellAmount),
+    fee: normalizeOptionalNumber(rawDetail.fee),
+    acquisitionDate: normalizeAnyDate(rawDetail.acquisitionDate) || '',
+    acquisitionAmount: normalizeOptionalNumber(rawDetail.acquisitionAmount),
+    profit: normalizeOptionalNumber(rawDetail.profit)
+  };
+
+  return Object.values(detail).some((value) => value !== '' && value != null) ? detail : null;
+}
+
 export function inferManualTypeFromFields(assetType, action, positionEffect, positionSide) {
   return Object.keys(MANUAL_TYPE_MAP).find((key) => {
     const item = MANUAL_TYPE_MAP[key];
@@ -73,6 +89,8 @@ export function describeTradeType(rawTradeType = '') {
 
   if (value === '株式現物買') return { supported: true, manualType: 'spot_buy' };
   if (value === '株式現物売') return { supported: true, manualType: 'spot_sell' };
+  if (value === '投信金額買付') return { supported: true, manualType: 'fund_buy' };
+  if (value === '投信金額解約') return { supported: true, manualType: 'fund_sell' };
   if (value === '信用新規買') return { supported: true, manualType: 'margin_open_long' };
   if (value === '信用返済売') return { supported: true, manualType: 'margin_close_long' };
   if (value === '信用新規売') return { supported: true, manualType: 'margin_open_short' };
@@ -80,6 +98,8 @@ export function describeTradeType(rawTradeType = '') {
 
   if (value.includes('株式現物') && value.includes('買')) return { supported: true, manualType: 'spot_buy' };
   if (value.includes('株式現物') && value.includes('売')) return { supported: true, manualType: 'spot_sell' };
+  if (value.includes('投信') && value.includes('買付')) return { supported: true, manualType: 'fund_buy' };
+  if (value.includes('投信') && value.includes('解約')) return { supported: true, manualType: 'fund_sell' };
   if (value.includes('信用') && value.includes('新規') && value.includes('買')) return { supported: true, manualType: 'margin_open_long' };
   if (value.includes('信用') && value.includes('返済') && value.includes('売')) return { supported: true, manualType: 'margin_close_long' };
   if (value.includes('信用') && value.includes('新規') && value.includes('売')) return { supported: true, manualType: 'margin_open_short' };
@@ -108,6 +128,7 @@ export function createManualTrade(settings, preset = {}) {
     name: preset.name || '',
     market: preset.market || 'tse',
     marketLabel: preset.marketLabel || marketLabelFromKey(preset.market || 'tse'),
+    productType: preset.productType || 'stock',
     term: preset.term || '--',
     custody: preset.custody || '特定',
     taxCategory: preset.taxCategory || '--',
@@ -116,6 +137,7 @@ export function createManualTrade(settings, preset = {}) {
     fee: preset.fee ?? '',
     taxAmount: preset.taxAmount ?? '',
     holdingCost: preset.holdingCost ?? '',
+    reportedProfit: preset.reportedProfit ?? '',
     settlementDate: preset.settlementDate || '',
     settlementAmount: preset.settlementAmount ?? '',
     notes: preset.notes || '',
@@ -159,6 +181,7 @@ export function normalizeTrade(trade, dayDate, index = 0, settings = createDefau
     positionSide: raw.positionSide || config.positionSide,
     market: normalizeMarketKey(raw.market || raw.marketLabel),
     marketLabel: trimText(raw.marketLabel || marketLabelFromKey(normalizeMarketKey(raw.market || raw.marketLabel))),
+    productType: trimText(raw.productType || (fallbackManualType.startsWith('fund_') ? 'fund' : 'stock')),
     tradeTypeLabel: trimText(raw.tradeTypeLabel || config.tradeTypeLabel),
     term: trimText(raw.term || '--'),
     custody: trimText(raw.custody || '特定'),
@@ -168,12 +191,14 @@ export function normalizeTrade(trade, dayDate, index = 0, settings = createDefau
     fee: raw.fee === '' ? '' : (safeNumber(raw.fee) ?? ''),
     taxAmount: raw.taxAmount === '' ? '' : (safeNumber(raw.taxAmount) ?? ''),
     holdingCost: raw.holdingCost === '' ? '' : (safeNumber(raw.holdingCost) ?? ''),
+    reportedProfit: raw.reportedProfit === '' ? '' : (safeNumber(raw.reportedProfit) ?? ''),
     settlementDate: normalizeAnyDate(raw.settlementDate) || '',
     settlementAmount: raw.settlementAmount === '' ? '' : (safeNumber(raw.settlementAmount) ?? ''),
     notes: trimText(raw.notes || ''),
     fingerprint: trimText(raw.fingerprint || ''),
     csvBaseSignature: trimText(raw.csvBaseSignature || ''),
     marginSettlement: normalizeMarginSettlement(raw.marginSettlement),
+    taxDetail: normalizeTaxDetail(raw.taxDetail),
     ratioSnapshot: normalizeRuleSnapshot(raw.ratioSnapshot || cloneActiveRuleSnapshot(nextSettings, assetType), assetType)
   };
 }
@@ -205,6 +230,7 @@ export function buildTradeSoftKey(date, trade, settings = createDefaultSettings(
     normalized.action,
     normalized.positionEffect,
     normalized.positionSide,
+    normalized.productType,
     normalized.market,
     normalized.quantity,
     normalized.price,
@@ -284,6 +310,7 @@ export function mergeTradeVersions(existingTrade, incomingTrade, date, settings 
     fingerprint: preferred.fingerprint || secondary.fingerprint,
     csvBaseSignature: preferred.csvBaseSignature || secondary.csvBaseSignature,
     marginSettlement: preferred.marginSettlement || secondary.marginSettlement || null,
+    taxDetail: preferred.taxDetail || secondary.taxDetail || null,
     ratioSnapshot: preferred.ratioSnapshot || secondary.ratioSnapshot || cloneActiveRuleSnapshot(settings, preferred.assetType)
   }, date, Number(preferred.order) || 0, settings);
 }

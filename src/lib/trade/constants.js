@@ -41,6 +41,22 @@ export const MANUAL_TYPE_MAP = {
     tradeTypeLabel: '株式現物売',
     label: '株式現物売'
   },
+  fund_buy: {
+    assetType: 'cash',
+    action: 'buy',
+    positionEffect: 'open',
+    positionSide: 'long',
+    tradeTypeLabel: '投信金額買付',
+    label: '投信買付'
+  },
+  fund_sell: {
+    assetType: 'cash',
+    action: 'sell',
+    positionEffect: 'close',
+    positionSide: 'long',
+    tradeTypeLabel: '投信金額解約',
+    label: '投信解約'
+  },
   margin_open_long: {
     assetType: 'margin',
     action: 'buy',

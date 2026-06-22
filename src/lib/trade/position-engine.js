@@ -17,12 +17,50 @@ export function createPositionBooks() {
 }
 
 function getTradeReportedClosePnl(trade) {
-  if (!(trade.assetType === 'margin' && trade.positionEffect === 'close')) return null;
-  return trade.settlementAmount === '' ? null : safeNumber(trade.settlementAmount);
+  if (trade.assetType === 'margin' && trade.positionEffect === 'close') {
+    return trade.settlementAmount === '' ? null : safeNumber(trade.settlementAmount);
+  }
+
+  if (trade.assetType === 'cash' && trade.action === 'sell') {
+    return trade.reportedProfit === '' ? null : safeNumber(trade.reportedProfit);
+  }
+
+  return null;
 }
 
 function getTradeHoldingCostOverride(trade) {
   return trade.holdingCost === '' ? null : safeNumber(trade.holdingCost);
+}
+
+function sumKnownNumbers(values) {
+  return values.reduce((sum, value) => {
+    const amount = safeNumber(value);
+    return amount == null ? sum : sum + amount;
+  }, 0);
+}
+
+function getTradeReportedCloseCost(trade) {
+  if (getTradeReportedClosePnl(trade) == null) return null;
+
+  const detail = trade.marginSettlement;
+  const totalExpenses = safeNumber(detail?.totalExpenses);
+  if (totalExpenses != null) return totalExpenses;
+
+  const detailedExpenses = sumKnownNumbers([
+    detail?.openFee,
+    detail?.closeFee,
+    detail?.managementFee,
+    detail?.lendingFee,
+    detail?.interestAmount,
+    detail?.reverseDailyFee,
+    detail?.consumptionTax,
+    detail?.rewritingFee,
+    trade.taxDetail?.fee
+  ]);
+  if (detailedExpenses > 0) return detailedExpenses;
+
+  const executionExpenses = sumKnownNumbers([trade.fee, trade.taxAmount]);
+  return executionExpenses > 0 ? executionExpenses : null;
 }
 
 function getLotUnitPrice(lot, valueKey) {
@@ -325,6 +363,7 @@ export function processPositionTrade(books, trade, dayDate) {
   const settlementAmount = safeNumber(trade.settlementAmount);
   const holdingCostOverride = getTradeHoldingCostOverride(trade);
   const reportedClosePnl = getTradeReportedClosePnl(trade);
+  const reportedCloseCost = getTradeReportedCloseCost(trade);
   const grossAmount = roundMoney(quantity * price);
   const buyCost = trade.assetType === 'cash' && settlementAmount != null && trade.action === 'buy'
     ? settlementAmount
@@ -351,14 +390,14 @@ export function processPositionTrade(books, trade, dayDate) {
     } else {
       const closeResult = closeLongPosition(books.cashPositions, trade.symbol, quantity, sellRevenue, dayDate);
       derivedNetProfit = closeResult.derivedNetProfit;
-      realizedProfit = derivedNetProfit;
+      realizedProfit = reportedClosePnl != null ? reportedClosePnl : derivedNetProfit;
       grossRealizedProfit = closeResult.grossProfit;
       holdingCost = closeResult.holdingCost;
       estimatedHoldingCost = closeResult.estimatedHoldingCost;
       holdingCostSource = closeResult.holdingCostSource;
       costBasisAmount = closeResult.costBasis;
       closeValueAmount = sellRevenue;
-      profitSource = 'model';
+      profitSource = reportedClosePnl != null ? 'reported' : 'model';
     }
   } else if (trade.positionSide === 'short') {
     if (trade.positionEffect === 'open') {
@@ -426,14 +465,20 @@ export function processPositionTrade(books, trade, dayDate) {
   grossRealizedProfit = roundMoney(grossRealizedProfit);
   holdingCost = roundMoney(holdingCost);
   estimatedHoldingCost = roundMoney(estimatedHoldingCost);
+  const reportedHoldingCost = reportedClosePnl != null && reportedCloseCost != null
+    ? roundMoney(reportedCloseCost)
+    : null;
+  if (reportedHoldingCost != null && grossRealizedProfit === 0) {
+    grossRealizedProfit = roundMoney(realizedProfit + reportedHoldingCost);
+  }
 
   return {
     realizedProfit,
     derivedNetProfit,
     grossRealizedProfit,
-    holdingCost: profitSource === 'reported' ? 0 : holdingCost,
+    holdingCost: reportedHoldingCost ?? holdingCost,
     estimatedHoldingCost,
-    financingCost: profitSource === 'reported' ? 0 : holdingCost,
+    financingCost: reportedHoldingCost ?? holdingCost,
     estimatedFinancingCost: estimatedHoldingCost,
     holdingCostSource,
     reportedClosePnl,

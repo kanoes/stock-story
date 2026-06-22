@@ -225,6 +225,16 @@ export function App() {
       const taxText = result.summary.taxDetails?.length
         ? `，税务 ${result.summary.taxDetails.reduce((sum, item) => sum + (Number(item.taxRows) || 0), 0)} 组`
         : '';
+      const fundText = result.summary.importedInvestmentTrustRows
+        ? `，投信 ${result.summary.importedInvestmentTrustRows} 行`
+        : '';
+      const conversionText = result.summary.importedConversionRows
+        ? `，現引 ${result.summary.importedConversionRows} 行`
+        : '';
+      const skippedText = [
+        result.summary.skippedInvestmentTrust ? `忽略投信 ${result.summary.skippedInvestmentTrust} 行` : '',
+        result.summary.skippedUnsupported ? `不支持 ${result.summary.skippedUnsupported} 行` : ''
+      ].filter(Boolean).join('，');
       const cloudText = result.cloudSynced
         ? '，已覆盖云端'
         : result.cloudSyncError
@@ -234,7 +244,7 @@ export function App() {
       setCsvPreviewState(createCsvPreviewState());
       setToast({
         tone: result.cloudSyncError ? 'warning' : 'success',
-        text: `已重建导入 ${result.summary.importedRows} 笔交易${supplementText}${taxText}${cloudText}，忽略投信 ${result.summary.skippedInvestmentTrust} 行。`
+        text: `已重建导入 ${result.summary.importedRows} 笔交易${fundText}${conversionText}${supplementText}${taxText}${cloudText}${skippedText ? `，${skippedText}` : ''}。`
       });
     } catch {
       setCsvPreviewState((current) => ({ ...current, confirming: false }));
