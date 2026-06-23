@@ -7,8 +7,59 @@ export function createDefaultSettings() {
     version: APP_VERSION,
     updatedAt: now,
     lastCsvImportAt: '',
-    lastCsvImportSummary: null
+    lastCsvImportSummary: null,
+    memos: []
   };
+}
+
+function readTime(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+export function normalizeMemo(rawMemo, index = 0) {
+  const raw = rawMemo && typeof rawMemo === 'object' ? rawMemo : {};
+  const id = trimText(raw.id) || `legacy-memo-${index}`;
+  const title = trimText(raw.title);
+  const body = trimText(raw.body);
+  const updatedAt = trimText(raw.updatedAt) || trimText(raw.createdAt) || '';
+  const createdAt = trimText(raw.createdAt) || updatedAt;
+  const deletedAt = trimText(raw.deletedAt);
+
+  return {
+    id,
+    title,
+    body,
+    createdAt,
+    updatedAt,
+    deletedAt
+  };
+}
+
+function normalizeMemos(rawMemos) {
+  if (!Array.isArray(rawMemos)) return [];
+
+  return rawMemos
+    .map(normalizeMemo)
+    .filter((memo) => memo.id && (memo.title || memo.body || memo.deletedAt))
+    .sort((left, right) => {
+      const rightTime = readTime(right.updatedAt || right.deletedAt || right.createdAt);
+      const leftTime = readTime(left.updatedAt || left.deletedAt || left.createdAt);
+      return rightTime - leftTime;
+    });
+}
+
+function mergeMemos(localMemos, remoteMemos) {
+  const merged = new Map();
+
+  [...normalizeMemos(localMemos), ...normalizeMemos(remoteMemos)].forEach((memo) => {
+    const existing = merged.get(memo.id);
+    if (!existing || readTime(memo.updatedAt || memo.deletedAt || memo.createdAt) >= readTime(existing.updatedAt || existing.deletedAt || existing.createdAt)) {
+      merged.set(memo.id, memo);
+    }
+  });
+
+  return normalizeMemos(Array.from(merged.values()));
 }
 
 export function normalizeSettings(raw) {
@@ -19,7 +70,8 @@ export function normalizeSettings(raw) {
     version: APP_VERSION,
     updatedAt: trimText(settings.updatedAt) || defaults.updatedAt,
     lastCsvImportAt: trimText(settings.lastCsvImportAt) || '',
-    lastCsvImportSummary: settings.lastCsvImportSummary || null
+    lastCsvImportSummary: settings.lastCsvImportSummary || null,
+    memos: normalizeMemos(settings.memos)
   };
 }
 
@@ -61,6 +113,7 @@ export function mergeSettings(localSettings, remoteSettings) {
     lastCsvImportAt: useRemoteImport ? remote.lastCsvImportAt : local.lastCsvImportAt,
     lastCsvImportSummary: useRemoteImport
       ? (remote.lastCsvImportSummary || local.lastCsvImportSummary)
-      : (local.lastCsvImportSummary || remote.lastCsvImportSummary)
+      : (local.lastCsvImportSummary || remote.lastCsvImportSummary),
+    memos: mergeMemos(local.memos, remote.memos)
   });
 }

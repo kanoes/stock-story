@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { buildAnalytics } from '../src/lib/trade/analytics.js';
 import { rebuildDaysFromCsvFiles } from '../src/lib/trade/csv.js';
 import { mergeDays, normalizeTrade } from '../src/lib/trade/models.js';
-import { createDefaultSettings } from '../src/lib/trade/settings.js';
+import { createDefaultSettings, mergeSettings } from '../src/lib/trade/settings.js';
 import { buildHealthReport } from '../src/lib/view-models.js';
 
 function makeCsvFile(name, text) {
@@ -58,15 +58,60 @@ test('buildAnalytics assigns the provided 4/2 -> 4/4 trades to 4/4 profit using 
   assert.equal(analytics.summaries.all.totalProfit, 46780);
 });
 
-test('default settings only carry import metadata', () => {
+test('default settings carry import metadata and memos', () => {
   const settings = createDefaultSettings();
 
   assert.deepEqual(Object.keys(settings).sort(), [
     'lastCsvImportAt',
     'lastCsvImportSummary',
+    'memos',
     'updatedAt',
     'version'
   ]);
+  assert.deepEqual(settings.memos, []);
+});
+
+test('mergeSettings keeps the newest memo version including deletes', () => {
+  const local = {
+    ...createDefaultSettings(),
+    memos: [
+      {
+        id: 'memo-1',
+        title: 'Local',
+        body: 'deleted locally',
+        createdAt: '2026-06-20T00:00:00.000Z',
+        updatedAt: '2026-06-22T00:00:00.000Z',
+        deletedAt: '2026-06-22T00:00:00.000Z'
+      }
+    ]
+  };
+  const remote = {
+    ...createDefaultSettings(),
+    memos: [
+      {
+        id: 'memo-1',
+        title: 'Remote',
+        body: 'older remote memo',
+        createdAt: '2026-06-20T00:00:00.000Z',
+        updatedAt: '2026-06-21T00:00:00.000Z',
+        deletedAt: ''
+      },
+      {
+        id: 'memo-2',
+        title: 'Remote New',
+        body: 'new memo',
+        createdAt: '2026-06-21T00:00:00.000Z',
+        updatedAt: '2026-06-21T00:00:00.000Z',
+        deletedAt: ''
+      }
+    ]
+  };
+
+  const merged = mergeSettings(local, remote);
+
+  assert.equal(merged.memos.length, 2);
+  assert.equal(merged.memos.find((memo) => memo.id === 'memo-1').deletedAt, '2026-06-22T00:00:00.000Z');
+  assert.equal(merged.memos.find((memo) => memo.id === 'memo-2').title, 'Remote New');
 });
 
 test('rebuildDaysFromCsvFiles imports executions and enriches margin closes from supplemental CSVs', async () => {

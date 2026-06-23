@@ -32,6 +32,7 @@ import {
   createDefaultSettings,
   loadSettings,
   mergeSettings,
+  normalizeMemo,
   persistSettings
 } from './settings.js';
 import {
@@ -259,6 +260,58 @@ export async function upsertManualDay({ date, trades, dayId = '' }) {
 export async function removeDayById(dayId) {
   await deleteDay(dayId);
   await refreshState();
+  return getTradeAppSnapshot();
+}
+
+export async function upsertMemo({ id = '', title = '', body = '' } = {}) {
+  const normalizedTitle = trimText(title);
+  const normalizedBody = trimText(body);
+
+  if (!normalizedTitle && !normalizedBody) {
+    throw new Error('Memo 不能为空。');
+  }
+
+  const now = new Date().toISOString();
+  const memoId = trimText(id) || crypto.randomUUID();
+  const existing = (settings.memos || []).find((memo) => memo.id === memoId);
+  const nextMemo = normalizeMemo({
+    id: memoId,
+    title: normalizedTitle || normalizedBody.slice(0, 28) || 'Memo',
+    body: normalizedBody,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    deletedAt: ''
+  });
+  const others = (settings.memos || []).filter((memo) => memo.id !== memoId);
+
+  settings = persistSettings({
+    ...settings,
+    memos: [nextMemo, ...others]
+  });
+
+  return getTradeAppSnapshot();
+}
+
+export async function deleteMemo(id) {
+  const memoId = trimText(id);
+  if (!memoId) return getTradeAppSnapshot();
+
+  const existing = (settings.memos || []).find((memo) => memo.id === memoId);
+  if (!existing) return getTradeAppSnapshot();
+
+  const now = new Date().toISOString();
+  settings = persistSettings({
+    ...settings,
+    memos: [
+      normalizeMemo({
+        ...existing,
+        updatedAt: now,
+        deletedAt: now
+      }),
+      ...(settings.memos || []).filter((memo) => memo.id !== memoId)
+    ]
+  });
+
   return getTradeAppSnapshot();
 }
 

@@ -16,6 +16,7 @@ export const DAYS_IN_YEAR = 365;
 export const TAB_ITEMS = [
   { id: 'home', label: '总览', icon: 'home' },
   { id: 'records', label: '记录', icon: 'list' },
+  { id: 'memo', label: 'Memo', icon: 'memo' },
   { id: 'analysis', label: '分析', icon: 'bars' },
   { id: 'settings', label: '设置', icon: 'gear' }
 ];

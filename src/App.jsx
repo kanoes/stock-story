@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   clearCloudTradeData,
   clearLocalTradeData,
+  deleteMemo,
   importCsvFiles,
   maskEmail,
   parseFirebaseConfigPreview,
@@ -13,7 +14,8 @@ import {
   signOutFromFirebase,
   syncWithCloud,
   todayStr,
-  trimText
+  trimText,
+  upsertMemo
 } from './lib/trade/index.js';
 import {
   buildAnalysisDiagnostics,
@@ -31,11 +33,13 @@ import {
   ConfirmSheet,
   CsvImportPreviewSheet,
   ManualDaySheet,
+  MemoSheet,
   RecordFilterSheet
 } from './components/sheets.jsx';
 import {
   AnalysisTab,
   HomeTab,
+  MemoTab,
   RecordsTab,
   SettingsTab
 } from './components/tabs.jsx';
@@ -71,6 +75,15 @@ function createCsvPreviewState() {
   };
 }
 
+function createMemoSheetState(memo = null) {
+  return {
+    open: Boolean(memo),
+    id: memo?.id || '',
+    title: memo?.title || '',
+    body: memo?.body || ''
+  };
+}
+
 function getMonthOptions(days) {
   return Array.from(new Set(days.map((day) => day.date.slice(0, 7)))).sort().reverse();
 }
@@ -100,6 +113,7 @@ export function App() {
   const [recordFilterSheetOpen, setRecordFilterSheetOpen] = useState(false);
   const [confirmState, setConfirmState] = useState(createConfirmState());
   const [csvPreviewState, setCsvPreviewState] = useState(createCsvPreviewState());
+  const [memoSheet, setMemoSheet] = useState(createMemoSheetState());
   const [showAllPositions, setShowAllPositions] = useState(false);
   const [showAllRanking, setShowAllRanking] = useState(false);
   const csvInputRef = useRef(null);
@@ -232,6 +246,23 @@ export function App() {
     await runTask(() => syncWithCloud(), { successText: '已完成安全合并同步。' });
   }
 
+  function openMemoEditor(memo = null) {
+    setMemoSheet({
+      ...createMemoSheetState(memo),
+      open: true
+    });
+  }
+
+  async function handleMemoSave() {
+    await runTask(() => upsertMemo(memoSheet), { successText: 'Memo 已保存。' });
+    setMemoSheet(createMemoSheetState());
+    setActiveTab('memo');
+  }
+
+  async function handleMemoDelete(id) {
+    await runTask(() => deleteMemo(id), { successText: 'Memo 已删除。' });
+  }
+
   async function handleDangerConfirm() {
     if (confirmState.mode === 'cloud') {
       await runTask(() => clearCloudTradeData(), { successText: '云端数据已清空。' });
@@ -321,6 +352,9 @@ export function App() {
   const visibleRanking = isCompactScreen && !showAllRanking
     ? analysisSummary.ranking.slice(0, MOBILE_RANKING_LIMIT)
     : analysisSummary.ranking;
+  const visibleMemos = (snapshot.settings.memos || [])
+    .filter((memo) => !memo.deletedAt)
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0).getTime() - new Date(left.updatedAt || left.createdAt || 0).getTime());
   const recentDays = snapshot.analytics.daysDesc
     .filter((day) => day.scopes[dashboardScope].tradeCount > 0)
     .slice(0, 5);
@@ -394,6 +428,15 @@ export function App() {
           />
         ) : null}
 
+        {activeTab === 'memo' ? (
+          <MemoTab
+            memos={visibleMemos}
+            onAddMemo={() => openMemoEditor()}
+            onEditMemo={openMemoEditor}
+            onDeleteMemo={handleMemoDelete}
+          />
+        ) : null}
+
         {activeTab === 'analysis' ? (
           <AnalysisTab
             analysisScope={analysisScope}
@@ -464,6 +507,13 @@ export function App() {
         onAddTrade={handleManualAdd}
         onDeleteDay={handleDeleteDay}
         onSave={handleManualSave}
+      />
+
+      <MemoSheet
+        state={memoSheet}
+        onCancel={() => setMemoSheet(createMemoSheetState())}
+        onChange={(field, value) => setMemoSheet((current) => ({ ...current, [field]: value }))}
+        onSave={handleMemoSave}
       />
 
       <ConfirmSheet

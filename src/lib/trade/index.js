@@ -29,12 +29,14 @@ export {
   importCsvFiles,
   initializeTradeCore,
   previewCsvImportFiles,
+  deleteMemo,
   removeDayById,
   saveFirebaseConfig,
   signInWithGoogle,
   signOutFromFirebase,
   syncWithCloud,
-  upsertManualDay
+  upsertManualDay,
+  upsertMemo
 } from './store.js';
 export {
   addDays,

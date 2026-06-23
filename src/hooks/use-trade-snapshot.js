@@ -11,7 +11,8 @@ const EMPTY_SNAPSHOT = {
   version: '5.0.0',
   settings: {
     lastCsvImportAt: '',
-    lastCsvImportSummary: null
+    lastCsvImportSummary: null,
+    memos: []
   },
   days: [],
   analytics: buildAnalytics([]),

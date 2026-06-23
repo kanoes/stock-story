@@ -612,6 +612,51 @@ export function ManualDaySheet({
   );
 }
 
+export function MemoSheet({
+  state,
+  onCancel,
+  onChange,
+  onSave
+}) {
+  if (!state.open) return null;
+
+  return (
+    <Sheet
+      open={state.open}
+      onClose={onCancel}
+      title={state.id ? '编辑 memo' : '新增 memo'}
+      actions={(
+        <>
+          <button type="button" className="ghost-btn" onClick={onCancel}>取消</button>
+          <button type="button" className="primary-btn" onClick={onSave}>保存 memo</button>
+        </>
+      )}
+      tall
+    >
+      <div className="form-stack">
+        <label className="field-group">
+          <span className="form-label">标题</span>
+          <input
+            type="text"
+            className="form-input"
+            value={state.title}
+            onChange={(event) => onChange('title', event.target.value)}
+          />
+        </label>
+        <label className="field-group">
+          <span className="form-label">内容</span>
+          <textarea
+            className="form-input memo-textarea"
+            rows="12"
+            value={state.body}
+            onChange={(event) => onChange('body', event.target.value)}
+          />
+        </label>
+      </div>
+    </Sheet>
+  );
+}
+
 function tradeNeedsReview(duplicates, orphans) {
   return duplicates.length > 0 || orphans.length > 0;
 }

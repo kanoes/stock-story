@@ -104,6 +104,27 @@ function RankingCard({ item }) {
   );
 }
 
+function MemoCard({ memo, onEditMemo, onDeleteMemo }) {
+  const updatedDate = memo.updatedAt ? formatDateParts(memo.updatedAt).fullLabel : '';
+  const title = memo.title || memo.body.slice(0, 28) || 'Memo';
+
+  return (
+    <article className="list-card memo-card">
+      <div className="list-card-head">
+        <div>
+          <strong>{title}</strong>
+          <span>{updatedDate}</span>
+        </div>
+        <div className="trade-editor-tools">
+          <button type="button" className="ghost-btn small" onClick={() => onEditMemo(memo)}>编辑</button>
+          <button type="button" className="danger-btn small" onClick={() => onDeleteMemo(memo.id)}>删除</button>
+        </div>
+      </div>
+      {memo.body ? <p className="memo-body">{memo.body}</p> : null}
+    </article>
+  );
+}
+
 export function HomeTab({
   dashboardScope,
   setDashboardScope,
@@ -291,6 +312,48 @@ export function RecordsTab({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+export function MemoTab({
+  memos,
+  onAddMemo,
+  onEditMemo,
+  onDeleteMemo
+}) {
+  const latestMemo = memos[0] || null;
+
+  return (
+    <div className="page">
+      <AppTopBar
+        title="Memo"
+        actions={(
+          <div className="toolbar-row">
+            <button type="button" className="primary-btn" onClick={onAddMemo}>新增 memo</button>
+          </div>
+        )}
+      />
+
+      <section className="hero-grid">
+        <StatCard label="Memo 数" value={String(memos.length)} emphasis={memos.length > 0} />
+        <StatCard label="最近更新" value={latestMemo?.updatedAt ? formatDateParts(latestMemo.updatedAt).label : '无'} />
+      </section>
+
+      <section className="card">
+        <div className="stack-list">
+          {memos.length ? memos.map((memo) => (
+            <MemoCard
+              key={memo.id}
+              memo={memo}
+              onEditMemo={onEditMemo}
+              onDeleteMemo={onDeleteMemo}
+            />
+          )) : (
+            <EmptyState title="还没有 memo" />
+          )}
+        </div>
+      </section>
     </div>
   );
 }
