@@ -132,7 +132,16 @@ export function compareTradeProcessingOrder(left, right) {
   return compareTradeOrder(left, right);
 }
 
+function isCsvTrade(trade) {
+  return trimText(trade?.source || '') === 'csv'
+    || Boolean(trimText(trade?.fingerprint || trade?.csvBaseSignature || ''));
+}
+
 export function getTradePositionProcessingBucket(trade, dayDate) {
+  if (trade.assetType === 'cash' && isCsvTrade(trade)) {
+    return trade.action === 'sell' ? 1 : 0;
+  }
+
   if (
     trade.assetType === 'margin'
     && trade.positionEffect === 'close'

@@ -312,6 +312,40 @@ test('tax detail CSV derives zero profit when broker omits the profit amount', a
   assert.equal(healthReport.orphanCloseCount, 0);
 });
 
+test('buildAnalytics processes CSV cash buys before same-day cash sells for positions', () => {
+  const analytics = buildAnalytics([
+    {
+      date: '2026-06-01',
+      trades: [
+        normalizeTrade({
+          source: 'csv',
+          fingerprint: 'same-day-sell#1',
+          manualType: 'spot_sell',
+          symbol: '1111',
+          name: 'Same Day',
+          quantity: 100,
+          price: 120,
+          settlementAmount: 12000,
+          reportedProfit: 1000
+        }, '2026-06-01', 0),
+        normalizeTrade({
+          source: 'csv',
+          fingerprint: 'same-day-buy#1',
+          manualType: 'spot_buy',
+          symbol: '1111',
+          name: 'Same Day',
+          quantity: 100,
+          price: 110,
+          settlementAmount: 11000
+        }, '2026-06-01', 1)
+      ]
+    }
+  ]);
+
+  assert.equal(analytics.summaries.cash.totalProfit, 1000);
+  assert.equal(analytics.summaries.cash.positionsCount, 0);
+});
+
 test('mergeDays keeps distinct CSV rows with identical visible trade fields', () => {
   const settings = createDefaultSettings();
   const day = {
