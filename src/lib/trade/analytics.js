@@ -1,4 +1,4 @@
-import { DIVIDEND_START_DATE, SCOPES } from './constants.js';
+import { SCOPES } from './constants.js';
 import { getStockDisplayName } from './company-data.js';
 import { normalizeDay, normalizeTrade } from './models.js';
 import {
@@ -10,7 +10,6 @@ import {
   compareByDateAsc,
   compareTradePositionProcessingOrder,
   getCurrentWeekMondayStr,
-  roundMoney,
   sumMoney,
   todayStr
 } from './utils.js';
@@ -23,13 +22,10 @@ function createScopeDayState() {
     estimatedHoldingCost: 0,
     financingCost: 0,
     estimatedFinancingCost: 0,
-    dividend: 0,
     tradeCount: 0,
     closeTradeCount: 0,
     buyCount: 0,
     sellCount: 0,
-    positiveDividend: 0,
-    lossShare: 0,
     symbols: new Set()
   };
 }
@@ -56,13 +52,8 @@ function createScopeSummary() {
     ranking: [],
     monthly: [],
     daySeries: [],
-    dividendHistory: [],
-    totalDividend: 0,
-    totalLossShare: 0,
-    netDividend: 0,
     today: {
       profit: 0,
-      dividend: 0,
       tradeCount: 0,
       holdingCost: 0,
       estimatedHoldingCost: 0,
@@ -71,7 +62,6 @@ function createScopeSummary() {
     },
     week: {
       profit: 0,
-      dividend: 0,
       tradeCount: 0,
       holdingCost: 0,
       estimatedHoldingCost: 0,
@@ -79,21 +69,6 @@ function createScopeSummary() {
       estimatedFinancingCost: 0
     }
   };
-}
-
-function calculateDividendWithRule(profit, ruleSnapshot) {
-  const amount = Number(profit) || 0;
-  if (!amount || !ruleSnapshot) return 0;
-
-  const numerator = Number(ruleSnapshot.numerator) || 1;
-  const denominator = Number(ruleSnapshot.denominator) || 1;
-  const ratio = numerator / denominator;
-
-  if (amount >= 0) {
-    return Math.ceil(amount * ratio * 0.8);
-  }
-
-  return Math.floor(amount * ratio);
 }
 
 export function buildAnalytics(days) {
@@ -124,14 +99,10 @@ export function buildAnalytics(days) {
 
     processingTrades.forEach((trade) => {
       const positionResult = processPositionTrade(positionBooks, trade, day.date);
-      const dividendAmount = day.date >= DIVIDEND_START_DATE
-        ? calculateDividendWithRule(positionResult.realizedProfit, trade.ratioSnapshot)
-        : 0;
 
       const enrichedTrade = {
         ...trade,
         ...positionResult,
-        dividendAmount,
         dayDate: day.date
       };
 
@@ -147,7 +118,6 @@ export function buildAnalytics(days) {
         scopeState.estimatedHoldingCost = sumMoney(scopeState.estimatedHoldingCost, positionResult.estimatedHoldingCost);
         scopeState.financingCost = scopeState.holdingCost;
         scopeState.estimatedFinancingCost = scopeState.estimatedHoldingCost;
-        scopeState.dividend = sumMoney(scopeState.dividend, dividendAmount);
         scopeState.symbols.add(trade.symbol || trade.name || '');
 
         if (trade.action === 'buy') scopeState.buyCount += 1;
@@ -155,8 +125,6 @@ export function buildAnalytics(days) {
         if (trade.positionEffect === 'close' || (trade.assetType === 'cash' && trade.action === 'sell')) {
           scopeState.closeTradeCount += 1;
         }
-        if (dividendAmount > 0) scopeState.positiveDividend += dividendAmount;
-        if (dividendAmount < 0) scopeState.lossShare += Math.abs(dividendAmount);
       });
     });
   });
@@ -176,7 +144,6 @@ export function buildAnalytics(days) {
     const summary = summaries[scope];
     const rankingMap = new Map();
     const monthlyMap = new Map();
-    const dividendHistory = [];
     const symbolSet = new Set();
 
     dayViews.forEach((day) => {
@@ -202,7 +169,6 @@ export function buildAnalytics(days) {
       if (day.date === today) {
         summary.today = {
           profit: scopeDay.profit,
-          dividend: scopeDay.dividend,
           tradeCount: scopeDay.tradeCount,
           holdingCost: scopeDay.holdingCost,
           estimatedHoldingCost: scopeDay.estimatedHoldingCost,
@@ -213,7 +179,6 @@ export function buildAnalytics(days) {
 
       if (day.date >= monday && day.date <= today) {
         summary.week.profit = sumMoney(summary.week.profit, scopeDay.profit);
-        summary.week.dividend = sumMoney(summary.week.dividend, scopeDay.dividend);
         summary.week.tradeCount += scopeDay.tradeCount;
         summary.week.holdingCost = sumMoney(summary.week.holdingCost, scopeDay.holdingCost);
         summary.week.estimatedHoldingCost = sumMoney(summary.week.estimatedHoldingCost, scopeDay.estimatedHoldingCost);
@@ -221,21 +186,9 @@ export function buildAnalytics(days) {
         summary.week.estimatedFinancingCost = summary.week.estimatedHoldingCost;
       }
 
-      if (day.date >= DIVIDEND_START_DATE && scopeDay.dividend !== 0) {
-        dividendHistory.push({
-          date: day.date,
-          profit: scopeDay.profit,
-          dividend: scopeDay.dividend,
-          cashDividend: day.scopes.cash.dividend,
-          marginDividend: day.scopes.margin.dividend
-        });
-      }
-
       const monthKey = day.date.slice(0, 7);
       monthlyMap.set(monthKey, sumMoney(monthlyMap.get(monthKey) || 0, scopeDay.profit));
       scopeDay.symbols.forEach((symbol) => symbol && symbolSet.add(symbol));
-      summary.totalDividend = sumMoney(summary.totalDividend, scopeDay.positiveDividend);
-      summary.totalLossShare = sumMoney(summary.totalLossShare, scopeDay.lossShare);
     });
 
     enrichedTrades.forEach((trade) => {
@@ -260,7 +213,6 @@ export function buildAnalytics(days) {
       if (trade.action === 'sell') target.sellCount += 1;
     });
 
-    summary.netDividend = roundMoney(summary.totalDividend - summary.totalLossShare);
     summary.winRate = summary.activeDays ? Math.round((summary.winDays / summary.activeDays) * 100) : 0;
     summary.symbolCount = symbolSet.size;
     summary.positions = positions[scope];
@@ -271,7 +223,6 @@ export function buildAnalytics(days) {
     summary.monthly = Array.from(monthlyMap.entries())
       .sort((left, right) => left[0].localeCompare(right[0]))
       .map(([month, profit]) => ({ month, profit }));
-    summary.dividendHistory = dividendHistory.sort((left, right) => right.date.localeCompare(left.date));
   });
 
   return {

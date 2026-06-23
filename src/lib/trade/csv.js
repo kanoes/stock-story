@@ -1,6 +1,5 @@
 import { MANUAL_TYPE_MAP } from './constants.js';
 import { collectManualDaysForCsvRebuild, describeTradeType, mergeTradeVersions, normalizeTrade, reindexTrades } from './models.js';
-import { cloneActiveRuleSnapshot } from './settings.js';
 import {
   compactText,
   compareTradeOrder,
@@ -235,8 +234,7 @@ function buildImportedTrade({
     taxDetail: overrides.taxDetail ?? null,
     notes: overrides.notes || '',
     fingerprint: `${fingerprintSignature}#${ordinal}`,
-    csvBaseSignature: fingerprintSignature,
-    ratioSnapshot: cloneActiveRuleSnapshot(settings, config.assetType)
+    csvBaseSignature: fingerprintSignature
   }, date, Number(overrides.order ?? ordinal) || 0, settings);
 }
 
@@ -277,14 +275,43 @@ function taxMatchSymbol(record) {
   return compactText(record['銘柄コード']) || compactText(record['銘柄']);
 }
 
+function normalizeTaxTradeType(rawTradeType) {
+  const value = trimText(rawTradeType);
+  if (value === '現物売') return '株式現物売';
+  if (value === '現物買') return '株式現物買';
+  return value;
+}
+
+function isMarginTaxTradeType(rawTradeType) {
+  return normalizeTaxTradeType(rawTradeType).startsWith('信用返済');
+}
+
 function buildExecutionTaxDetailKey(record, date) {
   return [
     date,
     taxMatchSymbol(record),
-    trimText(record['取引']),
+    normalizeTaxTradeType(record['取引']),
     quantityKey(record['約定数量']),
     normalizeAnyDate(record['受渡日']) || '',
     numberKey(record['受渡金額/決済損益'])
+  ].join('|');
+}
+
+function buildExecutionTaxDetailRelaxedKey(record) {
+  return [
+    taxMatchSymbol(record),
+    normalizeTaxTradeType(record['取引']),
+    quantityKey(record['約定数量']),
+    normalizeAnyDate(record['受渡日']) || '',
+    numberKey(record['受渡金額/決済損益'])
+  ].join('|');
+}
+
+function buildExecutionTaxDetailAggregateKey(record) {
+  return [
+    taxMatchSymbol(record),
+    normalizeTaxTradeType(record['取引']),
+    normalizeAnyDate(record['受渡日']) || ''
   ].join('|');
 }
 
@@ -292,11 +319,41 @@ function buildTaxDetailKey(record, date) {
   return [
     date,
     taxMatchSymbol(record),
-    trimText(record['取引']),
+    normalizeTaxTradeType(record['取引']),
     quantityKey(record['数量']),
     normalizeAnyDate(record['受渡日']) || '',
     numberKey(record['売却/決済金額'])
   ].join('|');
+}
+
+function buildTaxDetailRelaxedKey(record) {
+  return [
+    taxMatchSymbol(record),
+    normalizeTaxTradeType(record['取引']),
+    quantityKey(record['数量']),
+    normalizeAnyDate(record['受渡日']) || '',
+    numberKey(record['売却/決済金額'])
+  ].join('|');
+}
+
+function buildTaxDetailAggregateKey(record) {
+  return [
+    taxMatchSymbol(record),
+    normalizeTaxTradeType(record['取引']),
+    normalizeAnyDate(record['受渡日']) || ''
+  ].join('|');
+}
+
+function calculateTaxDetailProfit(record) {
+  const explicitProfit = toSignedNumber(record['損益金額/徴収額']);
+  if (explicitProfit != null) return explicitProfit;
+
+  const sellAmount = safeNumber(record['売却/決済金額']);
+  const acquisitionAmount = safeNumber(record['取得/新規金額']);
+  if (sellAmount == null || acquisitionAmount == null) return null;
+
+  const fee = safeNumber(record['費用']) || 0;
+  return sellAmount - fee - acquisitionAmount;
 }
 
 function buildMarginSettlementKey(record, date) {
@@ -321,6 +378,7 @@ function parseMarginSettlementRecord(record) {
     settlementAmount,
     marginSettlement: {
       source: CSV_KIND.MARGIN_SETTLEMENTS,
+      rawTradeType: trimText(record['取引'] || ''),
       settlementDate: normalizeAnyDate(record['受渡日']) || '',
       closeMarket: trimText(record['決済市場'] || ''),
       openMarket: trimText(record['建市場'] || ''),
@@ -347,7 +405,9 @@ function parseMarginSettlementRecord(record) {
 function parseMarginSettlementCsv(rows) {
   const { records } = getRecordsAfterHeader(rows, '決済日');
   const details = records.map(parseMarginSettlementRecord).filter(Boolean);
-  const totalPnl = details.reduce((sum, detail) => sum + (Number(detail.settlementAmount) || 0), 0);
+  const totalPnl = details
+    .filter((detail) => !isGenbikiTradeType(detail.marginSettlement?.sourceTradeType || detail.marginSettlement?.tradeType || detail.marginSettlement?.rawTradeType))
+    .reduce((sum, detail) => sum + (Number(detail.settlementAmount) || 0), 0);
   const totalInterest = details.reduce((sum, detail) => sum + (Number(detail.marginSettlement.interestAmount) || 0), 0);
   const totalExpenses = details.reduce((sum, detail) => sum + (Number(detail.marginSettlement.totalExpenses) || 0), 0);
 
@@ -404,16 +464,26 @@ function parseTaxCsv(rows) {
   const period = parseTaxPeriod(rows);
   const details = tradeRows.map((record) => {
     const date = normalizeAnyDate(record['約定日']);
-    const profit = toSignedNumber(record['損益金額/徴収額']);
+    const profit = calculateTaxDetailProfit(record);
     if (!date || !trimText(record['取引']) || profit == null) return null;
+    const quantity = safeNumber(trimText(record['数量']).replace(/[^\d.+-]/g, '')) ?? 0;
+    const sellAmount = safeNumber(record['売却/決済金額']) ?? 0;
+    const tradeType = normalizeTaxTradeType(record['取引']);
 
     return {
       key: buildTaxDetailKey(record, date),
+      relaxedKey: buildTaxDetailRelaxedKey(record),
+      aggregateKey: buildTaxDetailAggregateKey(record),
+      tradeType,
+      matchable: !isMarginTaxTradeType(tradeType),
+      quantity,
+      sellAmount,
+      rowCount: 1,
       reportedProfit: profit,
       taxDetail: {
         source: CSV_KIND.TAX_DETAILS,
         settlementDate: normalizeAnyDate(record['受渡日']) || '',
-        sellAmount: safeNumber(record['売却/決済金額']) ?? '',
+        sellAmount: sellAmount || '',
         fee: safeNumber(record['費用']) ?? '',
         acquisitionDate: normalizeAnyDate(record['取得/新規年月日']) || '',
         acquisitionAmount: safeNumber(record['取得/新規金額']) ?? '',
@@ -422,9 +492,11 @@ function parseTaxCsv(rows) {
     };
   }).filter(Boolean);
 
-  const totalProfit = tradeRows.reduce((sum, record) => sum + (toSignedNumber(record['損益金額/徴収額']) || 0), 0);
+  const totalProfit = tradeRows.reduce((sum, record) => sum + (calculateTaxDetailProfit(record) || 0), 0);
   const incomeTax = taxRows.reduce((sum, record) => sum + (toSignedNumber(record['損益金額/徴収額']) || 0), 0);
   const localTax = taxRows.reduce((sum, record) => sum + (toSignedNumber(record['地方税']) || 0), 0);
+  const matchableRows = details.filter((detail) => detail.matchable).length;
+  const marginRows = details.filter((detail) => isMarginTaxTradeType(detail.tradeType)).length;
 
   return {
     details,
@@ -432,6 +504,8 @@ function parseTaxCsv(rows) {
       ...period,
       rows: records.length,
       importedRows: details.length,
+      matchableRows,
+      marginRows,
       tradeRows: tradeRows.length,
       taxRows: taxRows.length,
       totalProfit,
@@ -443,22 +517,126 @@ function parseTaxCsv(rows) {
 }
 
 function buildTaxDetailQueues(details) {
-  const queues = new Map();
+  const exact = new Map();
+  const relaxed = new Map();
+  const aggregate = new Map();
+
+  const add = (map, key, detail) => {
+    const queue = map.get(key) || [];
+    queue.push(detail);
+    map.set(key, queue);
+  };
 
   details.forEach((detail) => {
-    const queue = queues.get(detail.key) || [];
-    queue.push(detail);
-    queues.set(detail.key, queue);
+    add(exact, detail.key, detail);
+    add(relaxed, detail.relaxedKey, detail);
+    add(aggregate, detail.aggregateKey, detail);
   });
 
-  return queues;
+  return { exact, relaxed, aggregate };
+}
+
+function takeQueuedTaxDetail(map, key) {
+  const queue = map.get(key);
+  while (queue?.length) {
+    const detail = queue.shift();
+    if (!detail.consumed) {
+      detail.consumed = true;
+      return detail;
+    }
+  }
+  return null;
+}
+
+function numbersEqual(left, right) {
+  return Math.abs((Number(left) || 0) - (Number(right) || 0)) < 1e-8;
+}
+
+function findTaxDetailCombination(candidates, targetQuantity, targetSellAmount) {
+  if (!candidates.length || targetQuantity == null || targetSellAmount == null) return null;
+
+  const sorted = [...candidates].sort((left, right) => (right.sellAmount || 0) - (left.sellAmount || 0));
+  const search = (index, quantity, sellAmount, picked) => {
+    if (numbersEqual(quantity, targetQuantity) && numbersEqual(sellAmount, targetSellAmount)) {
+      return picked;
+    }
+    if (index >= sorted.length || quantity > targetQuantity + 1e-8 || sellAmount > targetSellAmount + 1e-8) {
+      return null;
+    }
+
+    const detail = sorted[index];
+    return search(
+      index + 1,
+      quantity + (Number(detail.quantity) || 0),
+      sellAmount + (Number(detail.sellAmount) || 0),
+      [...picked, detail]
+    ) || search(index + 1, quantity, sellAmount, picked);
+  };
+
+  return search(0, 0, 0, []);
+}
+
+function sumOptionalTaxDetailField(details, field) {
+  let hasValue = false;
+  const total = details.reduce((sum, detail) => {
+    const value = safeNumber(detail.taxDetail?.[field]);
+    if (value == null) return sum;
+    hasValue = true;
+    return sum + value;
+  }, 0);
+  return hasValue ? total : '';
+}
+
+function commonTaxDetailDate(details, field) {
+  const values = Array.from(new Set(details.map((detail) => trimText(detail.taxDetail?.[field] || '')).filter(Boolean)));
+  return values.length === 1 ? values[0] : '';
+}
+
+function combineTaxDetails(details) {
+  if (details.length === 1) return details[0];
+
+  const reportedProfit = details.reduce((sum, detail) => sum + (Number(detail.reportedProfit) || 0), 0);
+  const sellAmount = details.reduce((sum, detail) => sum + (Number(detail.sellAmount) || 0), 0);
+  return {
+    key: details.map((detail) => detail.key).join(' + '),
+    relaxedKey: details.map((detail) => detail.relaxedKey).join(' + '),
+    aggregateKey: details[0]?.aggregateKey || '',
+    tradeType: details[0]?.tradeType || '',
+    matchable: details.some((detail) => detail.matchable),
+    quantity: details.reduce((sum, detail) => sum + (Number(detail.quantity) || 0), 0),
+    sellAmount,
+    rowCount: details.reduce((sum, detail) => sum + (Number(detail.rowCount) || 1), 0),
+    reportedProfit,
+    taxDetail: {
+      source: CSV_KIND.TAX_DETAILS,
+      settlementDate: commonTaxDetailDate(details, 'settlementDate'),
+      sellAmount,
+      fee: sumOptionalTaxDetailField(details, 'fee'),
+      acquisitionDate: commonTaxDetailDate(details, 'acquisitionDate'),
+      acquisitionAmount: sumOptionalTaxDetailField(details, 'acquisitionAmount'),
+      profit: reportedProfit
+    }
+  };
 }
 
 function consumeTaxDetail(queues, record, date) {
-  const key = buildExecutionTaxDetailKey(record, date);
-  const queue = queues.get(key);
-  if (!queue?.length) return null;
-  return queue.shift();
+  const exact = takeQueuedTaxDetail(queues.exact, buildExecutionTaxDetailKey(record, date));
+  if (exact) return exact;
+
+  const relaxed = takeQueuedTaxDetail(queues.relaxed, buildExecutionTaxDetailRelaxedKey(record));
+  if (relaxed) return relaxed;
+
+  const targetQuantity = safeNumber(record['約定数量']);
+  const targetSellAmount = safeNumber(record['受渡金額/決済損益']);
+  const aggregateCandidates = (queues.aggregate.get(buildExecutionTaxDetailAggregateKey(record)) || [])
+    .filter((detail) => !detail.consumed);
+  const combination = findTaxDetailCombination(aggregateCandidates, targetQuantity, targetSellAmount);
+  if (!combination) return null;
+
+  combination.forEach((detail) => {
+    detail.consumed = true;
+  });
+  return combineTaxDetails(combination);
 }
 
 function parseExecutionRecords(records, settings, marginSettlementQueues, taxDetailQueues, sharedSeen) {
@@ -582,7 +760,7 @@ function parseExecutionRecords(records, settings, marginSettlementQueues, taxDet
       summary.matchedMarginSettlementRows += 1;
     }
     if (taxDetail) {
-      summary.matchedTaxDetailRows += 1;
+      summary.matchedTaxDetailRows += Number(taxDetail.rowCount) || 1;
     }
 
     trades.push({
@@ -670,7 +848,8 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
   const marginSettlementQueues = buildMarginSettlementQueues(marginSettlementDetails);
   const taxResults = taxFiles.map((file) => parseTaxCsv(file.rows));
   const taxDetails = taxResults.flatMap((result) => result.details);
-  const taxDetailQueues = buildTaxDetailQueues(taxDetails);
+  const matchableTaxDetails = taxDetails.filter((detail) => detail.matchable);
+  const taxDetailQueues = buildTaxDetailQueues(matchableTaxDetails);
   const sharedSeen = new Map();
 
   let parsed = {
@@ -744,8 +923,7 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
     if (matchIndex >= 0) {
       day.trades[matchIndex] = mergeTradeVersions(day.trades[matchIndex], {
         ...trade,
-        updatedAt: now,
-        ratioSnapshot: day.trades[matchIndex].ratioSnapshot || trade.ratioSnapshot
+        updatedAt: now
       }, date, settings);
     } else {
       day.trades.push(normalizeTrade({
@@ -779,8 +957,10 @@ export async function rebuildDaysFromCsvFiles(files, currentDays, settings) {
         ...marginSettlementSummary,
         unmatchedRows: Math.max(0, marginSettlementSummary.importedRows - parsed.summary.matchedMarginSettlementRows)
       },
-      taxDetailRows: taxDetails.length,
-      unmatchedTaxDetailRows: Math.max(0, taxDetails.length - parsed.summary.matchedTaxDetailRows),
+      taxDetailRows: matchableTaxDetails.length,
+      taxDetailSourceRows: taxDetails.length,
+      ignoredMarginTaxDetailRows: taxDetails.length - matchableTaxDetails.length,
+      unmatchedTaxDetailRows: Math.max(0, matchableTaxDetails.length - parsed.summary.matchedTaxDetailRows),
       taxDetails: taxSummaries
     }
   };

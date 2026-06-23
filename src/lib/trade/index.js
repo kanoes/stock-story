@@ -2,7 +2,6 @@ export { buildAnalytics } from './analytics.js';
 export { findCompanyNameBySymbol, getStockDisplayName } from './company-data.js';
 export {
   APP_VERSION,
-  DIVIDEND_START_DATE,
   MANUAL_TYPE_MAP,
   RECORDS_PAGE_SIZE,
   SCOPES,
@@ -35,7 +34,6 @@ export {
   signInWithGoogle,
   signOutFromFirebase,
   syncWithCloud,
-  updateDividendRule,
   upsertManualDay
 } from './store.js';
 export {

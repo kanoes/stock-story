@@ -1,4 +1,4 @@
-import { DIVIDEND_START_DATE, MANUAL_TYPE_MAP } from './trade/constants.js';
+import { MANUAL_TYPE_MAP } from './trade/constants.js';
 import { buildTradeSoftKey, normalizeDay } from './trade/models.js';
 import {
   addDays,
@@ -69,7 +69,6 @@ export function buildDashboardTimeline(daysAsc, scope, chartRange) {
         profit: scopeDay.profit,
         cumulative: running,
         tradeCount: scopeDay.tradeCount,
-        dividend: scopeDay.dividend,
         financingCost: scopeDay.financingCost
       };
     });
@@ -134,14 +133,14 @@ export function summarizeRecordDays(days, scope) {
     const scopeDay = day.scopes[scope];
     accumulator.totalProfit += scopeDay.profit;
     accumulator.tradeCount += scopeDay.tradeCount;
-    accumulator.dividend += scopeDay.dividend;
+    accumulator.closeTradeCount += scopeDay.closeTradeCount;
     if (scopeDay.profit > 0) accumulator.winDays += 1;
     if (scopeDay.profit < 0) accumulator.lossDays += 1;
     return accumulator;
   }, {
     totalProfit: 0,
     tradeCount: 0,
-    dividend: 0,
+    closeTradeCount: 0,
     winDays: 0,
     lossDays: 0
   });
@@ -236,8 +235,10 @@ export function buildHealthReport(days) {
         const key = `${trade.assetType}|${trade.positionSide}|${trade.symbol}`;
         const current = positionMap.get(key) || 0;
         const next = trade.positionEffect === 'open' ? current + quantity : current - quantity;
+        const hasReportedCloseProfit = trade.reportedProfit !== '' && trade.reportedProfit != null;
+        const hasBrokerCloseDetail = hasReportedCloseProfit || Boolean(trade.marginSettlement);
 
-        if (trade.positionEffect === 'close' && quantity > current + 1e-8) {
+        if (trade.positionEffect === 'close' && quantity > current + 1e-8 && !hasBrokerCloseDetail) {
           orphanCloses.push({
             date: day.date,
             symbol: trade.symbol,
@@ -323,27 +324,6 @@ export function buildAnalysisDiagnostics(summary, trades) {
     lossTradeCount: lossTrades.length,
     tradeWinRate
   };
-}
-
-export function buildDividendMonthlySummary(dividendHistory, scope) {
-  const monthlyMap = new Map();
-
-  dividendHistory
-    .filter((item) => item.date >= DIVIDEND_START_DATE)
-    .forEach((item) => {
-      const month = item.date.slice(0, 7);
-      const value = scope === 'cash'
-        ? item.cashDividend
-        : scope === 'margin'
-          ? item.marginDividend
-          : item.dividend;
-
-      monthlyMap.set(month, (monthlyMap.get(month) || 0) + value);
-    });
-
-  return Array.from(monthlyMap.entries())
-    .sort((left, right) => left[0].localeCompare(right[0]))
-    .map(([month, dividend]) => ({ month, dividend }));
 }
 
 export function buildScopeOptions() {

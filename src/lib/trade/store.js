@@ -29,7 +29,6 @@ import {
   reindexTrades
 } from './models.js';
 import {
-  cloneActiveRuleSnapshot,
   createDefaultSettings,
   loadSettings,
   mergeSettings,
@@ -263,26 +262,6 @@ export async function removeDayById(dayId) {
   return getTradeAppSnapshot();
 }
 
-export function updateDividendRule(assetType, numerator, denominator) {
-  const target = assetType === 'margin' ? 'margin' : 'cash';
-  const nextRule = {
-    id: `${target}-${new Date().toISOString()}`,
-    numerator: Math.max(1, parseInt(numerator, 10) || 1),
-    denominator: Math.max(1, parseInt(denominator, 10) || 1),
-    updatedAt: new Date().toISOString()
-  };
-
-  settings = persistSettings({
-    ...settings,
-    dividendRules: {
-      ...settings.dividendRules,
-      [target]: nextRule
-    }
-  });
-
-  return getTradeAppSnapshot();
-}
-
 export async function saveFirebaseConfig(rawText) {
   await saveCloudConfig(rawText);
   await restoreFirebaseSession();
@@ -360,11 +339,9 @@ export async function clearLocalTradeData() {
 }
 
 export function buildNextTradeFromType(trade, manualType, date = todayStr()) {
-  const assetType = manualType.startsWith('margin') ? 'margin' : 'cash';
   return normalizeTrade({
     ...trade,
     manualType,
-    ratioSnapshot: cloneActiveRuleSnapshot(settings, assetType),
     updatedAt: new Date().toISOString()
   }, date, Number(trade?.order) || 0, settings);
 }

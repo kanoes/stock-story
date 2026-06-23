@@ -754,12 +754,6 @@ button:disabled:hover {
   border: 1px solid var(--line);
 }
 
-.rule-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .sync-block strong {
   color: var(--text);
 }
@@ -784,7 +778,7 @@ button:disabled:hover {
   width: min(calc(100% - 18px), 820px);
   padding: 8px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   border-radius: 24px;
   background: rgba(255, 251, 247, 0.92);
@@ -901,9 +895,6 @@ button:disabled:hover {
     width: min(100%, 760px);
   }
 
-  .rule-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {

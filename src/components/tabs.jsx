@@ -25,9 +25,12 @@ import {
 
 function RecordDayCard({ day, scope, compact, onOpen }) {
   const scopeDay = day.scopes[scope];
+  const cashDay = day.scopes.cash;
+  const marginDay = day.scopes.margin;
   const symbols = Array.from(scopeDay.symbols || []).filter(Boolean).slice(0, compact ? 3 : 6);
   const dateParts = formatDateParts(day.date);
   const tone = getValueTone(scopeDay.profit);
+  const showDailySplit = scope === 'all';
 
   return (
     <button type="button" className="record-card" onClick={() => onOpen(day)}>
@@ -39,7 +42,15 @@ function RecordDayCard({ day, scope, compact, onOpen }) {
         <div className={`record-profit ${tone}`}>{formatMoney(scopeDay.profit)}</div>
       </div>
       <div className="record-card-meta">
-        <span>分红 {formatMoney(scopeDay.dividend)}</span>
+        {showDailySplit ? (
+          <>
+            <span className={getValueTone(cashDay.profit)}>现物 {formatMoney(cashDay.profit)}</span>
+            <span className={getValueTone(marginDay.profit)}>信用 {formatMoney(marginDay.profit)}</span>
+          </>
+        ) : (
+          <span>买 {scopeDay.buyCount} / 卖 {scopeDay.sellCount}</span>
+        )}
+        <span>平仓 {scopeDay.closeTradeCount}</span>
         <span>成本 {formatMoney(scopeDay.holdingCost, { signed: false })}</span>
       </div>
     </button>
@@ -93,33 +104,6 @@ function RankingCard({ item }) {
   );
 }
 
-function DividendHistoryCard({ item, scope }) {
-  const value = scope === 'cash'
-    ? item.cashDividend
-    : scope === 'margin'
-      ? item.marginDividend
-      : item.dividend;
-  const tone = getValueTone(value);
-
-  return (
-    <article className="list-card">
-      <div className="list-card-head">
-        <div>
-          <strong>{formatDateParts(item.date).fullLabel}</strong>
-          <span>分红前 {formatMoney(item.profit)}</span>
-        </div>
-        <strong className={tone}>{formatMoney(value)}</strong>
-      </div>
-      {scope === 'all' ? (
-        <div className="list-card-meta">
-          <span>现物 {formatMoney(item.cashDividend)}</span>
-          <span>信用 {formatMoney(item.marginDividend)}</span>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
 export function HomeTab({
   dashboardScope,
   setDashboardScope,
@@ -164,7 +148,7 @@ export function HomeTab({
         <StatCard label="累计收益" value={formatMoney(dashboardSummary.totalProfit)} tone={getValueTone(dashboardSummary.totalProfit)} emphasis />
         <StatCard label="本周" value={formatMoney(dashboardSummary.week.profit)} tone={getValueTone(dashboardSummary.week.profit)} />
         <StatCard label="本月" value={formatMoney(currentMonthProfit)} tone={getValueTone(currentMonthProfit)} />
-        <StatCard label="分红留存" value={formatMoney(dashboardSummary.netDividend)} tone={getValueTone(dashboardSummary.netDividend)} />
+        <StatCard label="交易笔数" value={String(dashboardSummary.tradeCount)} />
       </section>
 
       <section className="card">
@@ -275,7 +259,7 @@ export function RecordsTab({
         <StatCard label="筛选收益" value={formatMoney(filteredRecordSummary.totalProfit)} tone={getValueTone(filteredRecordSummary.totalProfit)} />
         <StatCard label="交易日" value={String(filteredRecordSummary.winDays + filteredRecordSummary.lossDays)} />
         <StatCard label="交易笔数" value={String(filteredRecordSummary.tradeCount)} />
-        <StatCard label="分红" value={formatMoney(filteredRecordSummary.dividend)} tone={getValueTone(filteredRecordSummary.dividend)} />
+        <StatCard label="平仓笔数" value={String(filteredRecordSummary.closeTradeCount)} />
       </section>
 
       {recordFilterBadges.length ? (
@@ -489,121 +473,6 @@ export function AnalysisTab({
   );
 }
 
-export function DividendTab({
-  dividendScope,
-  setDividendScope,
-  dividendSummary,
-  latestDividendEntry,
-  dividendMonthly,
-  visibleDividendHistory,
-  totalDividendHistory,
-  showAllDividendHistory,
-  setShowAllDividendHistory,
-  isCompactScreen,
-  onEditRule,
-  snapshot
-}) {
-  return (
-    <div className="page">
-      <AppTopBar
-        title="分红"
-        actions={<ScopeToggle value={dividendScope} onChange={setDividendScope} />}
-      />
-
-      <section className="hero-grid">
-        <StatCard label="累计分红" value={formatMoney(dividendSummary.totalDividend)} tone="positive" emphasis />
-        <StatCard label="累计分担" value={formatMoney(-dividendSummary.totalLossShare)} tone={dividendSummary.totalLossShare > 0 ? 'negative' : 'neutral'} />
-        <StatCard label="净留存" value={formatMoney(dividendSummary.netDividend)} tone={getValueTone(dividendSummary.netDividend)} />
-        <StatCard label="本周" value={formatMoney(dividendSummary.week.dividend)} tone={getValueTone(dividendSummary.week.dividend)} />
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <h2>当前比例</h2>
-        </div>
-        <div className="rule-grid">
-          {['cash', 'margin'].map((target) => {
-            const rule = snapshot.settings.dividendRules[target];
-            return (
-              <article className="list-card" key={target}>
-                <div className="list-card-head">
-                  <strong>{target === 'cash' ? '现物' : '信用'}</strong>
-                  <strong>{rule.numerator} / {rule.denominator}</strong>
-                </div>
-                <button type="button" className="ghost-btn wide-btn" onClick={() => onEditRule(target)}>修改</button>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <h2>最近一次</h2>
-        </div>
-        {latestDividendEntry ? (
-          <div className="stats-table">
-            <div className="stats-row">
-              <span>日期</span>
-              <strong>{formatDateParts(latestDividendEntry.date).fullLabel}</strong>
-            </div>
-            <div className="stats-row">
-              <span>分红前</span>
-              <strong className={getValueTone(latestDividendEntry.profit)}>{formatMoney(latestDividendEntry.profit)}</strong>
-            </div>
-            <div className="stats-row">
-              <span>分红</span>
-              <strong className={getValueTone(latestDividendEntry.dividend)}>{formatMoney(latestDividendEntry.dividend)}</strong>
-            </div>
-            <div className="stats-row">
-              <span>留存</span>
-              <strong className={getValueTone(latestDividendEntry.profit - latestDividendEntry.dividend)}>
-                {formatMoney(latestDividendEntry.profit - latestDividendEntry.dividend)}
-              </strong>
-            </div>
-          </div>
-        ) : (
-          <EmptyState title="还没有分红记录" />
-        )}
-      </section>
-
-      <CollapsibleSection title="月度分红">
-        <div className="stack-list">
-          {dividendMonthly.length ? dividendMonthly.map((item) => (
-            <article className="list-card" key={item.month}>
-              <div className="list-card-head">
-                <strong>{item.month}</strong>
-                <strong className={getValueTone(item.dividend)}>{formatMoney(item.dividend)}</strong>
-              </div>
-            </article>
-          )) : (
-            <EmptyState title="还没有月度分红统计" />
-          )}
-        </div>
-      </CollapsibleSection>
-
-      <section className="card">
-        <div className="card-head">
-          <h2>历史</h2>
-          <StatusBadge tone="neutral">{totalDividendHistory}</StatusBadge>
-        </div>
-        <div className="stack-list">
-          {visibleDividendHistory.length ? visibleDividendHistory.map((item) => (
-            <DividendHistoryCard key={`${item.date}-${item.dividend}`} item={item} scope={dividendScope} />
-          )) : (
-            <EmptyState title="还没有分红记录" />
-          )}
-        </div>
-        {isCompactScreen && totalDividendHistory > visibleDividendHistory.length ? (
-          <button type="button" className="ghost-btn wide-btn" onClick={() => setShowAllDividendHistory((current) => !current)}>
-            {showAllDividendHistory ? '收起' : '展开全部'}
-          </button>
-        ) : null}
-      </section>
-    </div>
-  );
-}
-
 export function SettingsTab({
   snapshot,
   currentAccountLabel,
@@ -645,7 +514,7 @@ export function SettingsTab({
           <StatCard label="导入交易" value={importSummary ? String(importSummary.importedRows || 0) : '0'} />
           <StatCard label="信用补充" value={marginImport ? `${importSummary.matchedMarginSettlementRows || 0}/${marginImport.importedRows || 0}` : '0/0'} />
           <StatCard label="税额对账" value={taxTotal ? formatMoney(-taxTotal) : '无'} tone={taxTotal ? 'negative' : 'neutral'} />
-          <StatCard label="税务明细" value={importSummary?.taxDetailRows ? `${importSummary.matchedTaxDetailRows || 0}/${importSummary.taxDetailRows}` : '0/0'} />
+          <StatCard label="现物明细" value={importSummary?.taxDetailRows ? `${importSummary.matchedTaxDetailRows || 0}/${importSummary.taxDetailRows}` : '0/0'} />
           <StatCard label="投信导入" value={importSummary?.importedInvestmentTrustRows ? String(importSummary.importedInvestmentTrustRows) : '0'} />
           <StatCard label="現引转换" value={importSummary?.importedConversionRows ? String(importSummary.importedConversionRows) : '0'} />
           <StatCard label="CSV 文件" value={importSummary?.fileCount ? String(importSummary.fileCount) : '0'} />

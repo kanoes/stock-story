@@ -13,14 +13,12 @@ import {
   signOutFromFirebase,
   syncWithCloud,
   todayStr,
-  trimText,
-  updateDividendRule
+  trimText
 } from './lib/trade/index.js';
 import {
   buildAnalysisDiagnostics,
   buildBarChartData,
   buildDashboardTimeline,
-  buildDividendMonthlySummary,
   buildHealthReport,
   buildLineChartData,
   buildMonthlyHighlights,
@@ -32,13 +30,11 @@ import { BottomNav, Toast } from './components/common.jsx';
 import {
   ConfirmSheet,
   CsvImportPreviewSheet,
-  DividendRuleSheet,
   ManualDaySheet,
   RecordFilterSheet
 } from './components/sheets.jsx';
 import {
   AnalysisTab,
-  DividendTab,
   HomeTab,
   RecordsTab,
   SettingsTab
@@ -58,15 +54,6 @@ const DEFAULT_RECORD_FILTERS = {
   sort: 'desc',
   compact: false
 };
-
-function createRuleState() {
-  return {
-    open: false,
-    target: 'cash',
-    numerator: '1',
-    denominator: '3'
-  };
-}
 
 function createConfirmState() {
   return {
@@ -100,25 +87,21 @@ export function App() {
     initialError,
     firebaseDraft,
     setFirebaseDraft,
-    applySnapshot,
     runTask
   } = useTradeSnapshot({ setToast });
   const [isCompactScreen, setIsCompactScreen] = useState(isCompactViewport);
   const [activeTab, setActiveTab] = useState('home');
   const [dashboardScope, setDashboardScope] = useState('all');
   const [analysisScope, setAnalysisScope] = useState('all');
-  const [dividendScope, setDividendScope] = useState('all');
   const [chartRange, setChartRange] = useState('week');
   const [chartType, setChartType] = useState('cumulative');
   const [recordsPage, setRecordsPage] = useState(0);
   const [recordFilters, setRecordFilters] = useState(DEFAULT_RECORD_FILTERS);
   const [recordFilterSheetOpen, setRecordFilterSheetOpen] = useState(false);
-  const [ruleSheet, setRuleSheet] = useState(createRuleState());
   const [confirmState, setConfirmState] = useState(createConfirmState());
   const [csvPreviewState, setCsvPreviewState] = useState(createCsvPreviewState());
   const [showAllPositions, setShowAllPositions] = useState(false);
   const [showAllRanking, setShowAllRanking] = useState(false);
-  const [showAllDividendHistory, setShowAllDividendHistory] = useState(false);
   const csvInputRef = useRef(null);
   const {
     manualSheet,
@@ -168,25 +151,7 @@ export function App() {
   useEffect(() => {
     setShowAllPositions(false);
     setShowAllRanking(false);
-    setShowAllDividendHistory(false);
-  }, [analysisScope, dividendScope, activeTab, isCompactScreen]);
-
-  function openRuleEditor(target) {
-    const rule = snapshot.settings.dividendRules[target];
-    setRuleSheet({
-      open: true,
-      target,
-      numerator: String(rule?.numerator || 1),
-      denominator: String(rule?.denominator || 1)
-    });
-  }
-
-  function handleRuleSave() {
-    const nextSnapshot = updateDividendRule(ruleSheet.target, ruleSheet.numerator, ruleSheet.denominator);
-    applySnapshot(nextSnapshot);
-    setRuleSheet(createRuleState());
-    setToast({ tone: 'success', text: '分红比例已更新。' });
-  }
+  }, [analysisScope, activeTab, isCompactScreen]);
 
   async function handleCsvImport(event) {
     const files = Array.from(event.target.files || []);
@@ -222,8 +187,8 @@ export function App() {
       const supplementText = marginSummary?.importedRows
         ? `，信用补充 ${result.summary.matchedMarginSettlementRows}/${marginSummary.importedRows} 行`
         : '';
-      const taxText = result.summary.taxDetails?.length
-        ? `，税务 ${result.summary.taxDetails.reduce((sum, item) => sum + (Number(item.taxRows) || 0), 0)} 组`
+      const taxText = result.summary.taxDetailRows
+        ? `，现物明细 ${result.summary.matchedTaxDetailRows || 0}/${result.summary.taxDetailRows} 行`
         : '';
       const fundText = result.summary.importedInvestmentTrustRows
         ? `，投信 ${result.summary.importedInvestmentTrustRows} 行`
@@ -278,7 +243,6 @@ export function App() {
 
   const dashboardSummary = snapshot.analytics.summaries[dashboardScope];
   const analysisSummary = snapshot.analytics.summaries[analysisScope];
-  const dividendSummary = snapshot.analytics.summaries[dividendScope];
   const chartData = buildLineChartData(buildDashboardTimeline(snapshot.analytics.daysAsc, dashboardScope, chartRange), dashboardScope, chartType);
   const monthlyChartData = buildBarChartData(analysisSummary);
   const healthReport = buildHealthReport(snapshot.days);
@@ -299,7 +263,6 @@ export function App() {
   const monthlyHighlights = buildMonthlyHighlights(analysisSummary.monthly);
   const bestStock = analysisSummary.ranking[0] || null;
   const worstStock = [...analysisSummary.ranking].reverse().find((item) => item.profit < 0) || analysisSummary.ranking[analysisSummary.ranking.length - 1] || null;
-  const latestDividendEntry = dividendSummary.dividendHistory[0] || null;
   const recordFilterBadges = buildRecordFilterBadges(recordFilters);
   const currentAccountLabel = snapshot.firebase.user?.email
     ? maskEmail(snapshot.firebase.user.email)
@@ -358,13 +321,9 @@ export function App() {
   const visibleRanking = isCompactScreen && !showAllRanking
     ? analysisSummary.ranking.slice(0, MOBILE_RANKING_LIMIT)
     : analysisSummary.ranking;
-  const visibleDividendHistory = isCompactScreen && !showAllDividendHistory
-    ? dividendSummary.dividendHistory.slice(0, MOBILE_VISIBLE_LIMIT)
-    : dividendSummary.dividendHistory;
   const recentDays = snapshot.analytics.daysDesc
     .filter((day) => day.scopes[dashboardScope].tradeCount > 0)
     .slice(0, 5);
-  const dividendMonthly = buildDividendMonthlySummary(dividendSummary.dividendHistory, dividendScope);
 
   if (!ready && !initialError) {
     return (
@@ -457,23 +416,6 @@ export function App() {
           />
         ) : null}
 
-        {activeTab === 'dividend' ? (
-          <DividendTab
-            dividendScope={dividendScope}
-            setDividendScope={setDividendScope}
-            dividendSummary={dividendSummary}
-            latestDividendEntry={latestDividendEntry}
-            dividendMonthly={dividendMonthly}
-            visibleDividendHistory={visibleDividendHistory}
-            totalDividendHistory={dividendSummary.dividendHistory.length}
-            showAllDividendHistory={showAllDividendHistory}
-            setShowAllDividendHistory={setShowAllDividendHistory}
-            isCompactScreen={isCompactScreen}
-            onEditRule={openRuleEditor}
-            snapshot={snapshot}
-          />
-        ) : null}
-
         {activeTab === 'settings' ? (
           <SettingsTab
             snapshot={snapshot}
@@ -522,13 +464,6 @@ export function App() {
         onAddTrade={handleManualAdd}
         onDeleteDay={handleDeleteDay}
         onSave={handleManualSave}
-      />
-
-      <DividendRuleSheet
-        state={ruleSheet}
-        onCancel={() => setRuleSheet(createRuleState())}
-        onChange={(field, value) => setRuleSheet((current) => ({ ...current, [field]: value }))}
-        onSave={handleRuleSave}
       />
 
       <ConfirmSheet

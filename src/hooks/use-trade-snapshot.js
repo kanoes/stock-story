@@ -11,11 +11,7 @@ const EMPTY_SNAPSHOT = {
   version: '5.0.0',
   settings: {
     lastCsvImportAt: '',
-    lastCsvImportSummary: null,
-    dividendRules: {
-      cash: { numerator: 1, denominator: 5, updatedAt: '' },
-      margin: { numerator: 1, denominator: 2, updatedAt: '' }
-    }
+    lastCsvImportSummary: null
   },
   days: [],
   analytics: buildAnalytics([]),

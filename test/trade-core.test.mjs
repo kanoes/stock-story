@@ -58,13 +58,15 @@ test('buildAnalytics assigns the provided 4/2 -> 4/4 trades to 4/4 profit using 
   assert.equal(analytics.summaries.all.totalProfit, 46780);
 });
 
-test('default dividend ratios are cash 1/5 and margin 1/2', () => {
+test('default settings only carry import metadata', () => {
   const settings = createDefaultSettings();
 
-  assert.equal(settings.dividendRules.cash.numerator, 1);
-  assert.equal(settings.dividendRules.cash.denominator, 5);
-  assert.equal(settings.dividendRules.margin.numerator, 1);
-  assert.equal(settings.dividendRules.margin.denominator, 2);
+  assert.deepEqual(Object.keys(settings).sort(), [
+    'lastCsvImportAt',
+    'lastCsvImportSummary',
+    'updatedAt',
+    'version'
+  ]);
 });
 
 test('rebuildDaysFromCsvFiles imports executions and enriches margin closes from supplemental CSVs', async () => {
@@ -167,6 +169,7 @@ test('tax detail CSV can provide reported cash profit when opening history is mi
     makeCsvFile('譲渡益税明細.csv', taxCsv)
   ], [], createDefaultSettings());
   const analytics = buildAnalytics(result.days);
+  const healthReport = buildHealthReport(result.days);
   const closeTrade = analytics.trades.find((trade) => trade.symbol === '1111');
 
   assert.equal(result.summary.matchedTaxDetailRows, 1);
@@ -176,6 +179,92 @@ test('tax detail CSV can provide reported cash profit when opening history is mi
   assert.equal(closeTrade.realizedProfit, 19990);
   assert.equal(analytics.summaries.cash.totalProfit, 19990);
   assert.equal(analytics.summaries.cash.holdingCost, 10);
+  assert.equal(healthReport.orphanCloseCount, 0);
+});
+
+test('tax detail CSV matches cash sells with broker short trade labels', async () => {
+  const executionCsv = `約定履歴照会
+商品指定,約定開始年月日,約定終了年月日,明細数,明細指定開始,明細指定終了
+すべての商品,2026年05月01日,2026年05月01日,1,1,1
+約定日,銘柄,銘柄コード,市場,取引,期限,預り,課税,約定数量,約定単価,手数料/諸経費等,税額,受渡日,受渡金額/決済損益
+2026/05/01,古い持株,1111,東証,株式現物売,--,特定,申告,100,1000,10,--,2026/05/05,99990
+`;
+  const taxCsv = `特定口座損益明細
+受渡開始年月日,受渡終了年月日,明細数,明細指定開始,明細指定終了
+2026年05月01日,2026年05月05日,1,1,1
+銘柄コード,銘柄,譲渡益取消区分,約定日,数量,取引,受渡日,売却/決済金額,費用,取得/新規年月日,取得/新規金額,損益金額/徴収額,地方税
+1111,古い持株,,2026/04/30,100株,現物売,2026/05/05,99990,10,2025/01/01,80000,+19990,
+`;
+
+  const result = await rebuildDaysFromCsvFiles([
+    makeCsvFile('約定履歴.csv', executionCsv),
+    makeCsvFile('譲渡益税明細.csv', taxCsv)
+  ], [], createDefaultSettings());
+  const analytics = buildAnalytics(result.days);
+  const closeTrade = analytics.trades.find((trade) => trade.symbol === '1111');
+
+  assert.equal(result.summary.matchedTaxDetailRows, 1);
+  assert.equal(result.summary.unmatchedTaxDetailRows, 0);
+  assert.equal(closeTrade.profitSource, 'reported');
+  assert.equal(closeTrade.realizedProfit, 19990);
+});
+
+test('tax detail CSV can combine split rows into one cash sell', async () => {
+  const executionCsv = `約定履歴照会
+商品指定,約定開始年月日,約定終了年月日,明細数,明細指定開始,明細指定終了
+すべての商品,2026年05月01日,2026年05月01日,1,1,1
+約定日,銘柄,銘柄コード,市場,取引,期限,預り,課税,約定数量,約定単価,手数料/諸経費等,税額,受渡日,受渡金額/決済損益
+2026/05/01,分割明細株,2222,東証,株式現物売,--,特定,申告,1200,374,--,--,2026/05/05,448800
+`;
+  const taxCsv = `特定口座損益明細
+受渡開始年月日,受渡終了年月日,明細数,明細指定開始,明細指定終了
+2026年05月01日,2026年05月05日,2,1,2
+銘柄コード,銘柄,譲渡益取消区分,約定日,数量,取引,受渡日,売却/決済金額,費用,取得/新規年月日,取得/新規金額,損益金額/徴収額,地方税
+2222,分割明細株,,2026/04/29,400株,現物売,2026/05/05,149600,0,2025/01/01,143600,+6000,
+2222,分割明細株,,2026/04/30,800株,現物売,2026/05/05,299200,0,2025/02/01,287200,+12000,
+`;
+
+  const result = await rebuildDaysFromCsvFiles([
+    makeCsvFile('約定履歴.csv', executionCsv),
+    makeCsvFile('譲渡益税明細.csv', taxCsv)
+  ], [], createDefaultSettings());
+  const analytics = buildAnalytics(result.days);
+  const closeTrade = analytics.trades.find((trade) => trade.symbol === '2222');
+
+  assert.equal(result.summary.matchedTaxDetailRows, 2);
+  assert.equal(result.summary.unmatchedTaxDetailRows, 0);
+  assert.equal(closeTrade.profitSource, 'reported');
+  assert.equal(closeTrade.realizedProfit, 18000);
+  assert.equal(closeTrade.taxDetail.sellAmount, 448800);
+});
+
+test('tax detail CSV derives zero profit when broker omits the profit amount', async () => {
+  const executionCsv = `約定履歴照会
+商品指定,約定開始年月日,約定終了年月日,明細数,明細指定開始,明細指定終了
+すべての商品,2026年05月01日,2026年05月01日,1,1,1
+約定日,銘柄,銘柄コード,市場,取引,期限,預り,課税,約定数量,約定単価,手数料/諸経費等,税額,受渡日,受渡金額/決済損益
+2026/05/01,同額移管株,3333,東証,株式現物売,--,特定,申告,100,257,--,--,2026/05/05,25700
+`;
+  const taxCsv = `特定口座損益明細
+受渡開始年月日,受渡終了年月日,明細数,明細指定開始,明細指定終了
+2026年05月01日,2026年05月05日,1,1,1
+銘柄コード,銘柄,譲渡益取消区分,約定日,数量,取引,受渡日,売却/決済金額,費用,取得/新規年月日,取得/新規金額,損益金額/徴収額,地方税
+3333,同額移管株,,2026/05/01,100株,現物売,2026/05/05,25700,--,2026/05/01,25700,--,
+`;
+
+  const result = await rebuildDaysFromCsvFiles([
+    makeCsvFile('約定履歴.csv', executionCsv),
+    makeCsvFile('譲渡益税明細.csv', taxCsv)
+  ], [], createDefaultSettings());
+  const analytics = buildAnalytics(result.days);
+  const healthReport = buildHealthReport(result.days);
+  const closeTrade = analytics.trades.find((trade) => trade.symbol === '3333');
+
+  assert.equal(result.summary.matchedTaxDetailRows, 1);
+  assert.equal(result.summary.unmatchedTaxDetailRows, 0);
+  assert.equal(closeTrade.profitSource, 'reported');
+  assert.equal(closeTrade.realizedProfit, 0);
+  assert.equal(healthReport.orphanCloseCount, 0);
 });
 
 test('mergeDays keeps distinct CSV rows with identical visible trade fields', () => {

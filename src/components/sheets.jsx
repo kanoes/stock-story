@@ -5,9 +5,10 @@ import {
   normalizeAnyDate,
   normalizeDay,
   todayStr,
-  trimText
+  trimText,
+  formatDateParts,
+  formatMoney
 } from '../lib/trade/index.js';
-import { formatMoney } from '../lib/trade/utils.js';
 import { buildHealthReport, getHoldingCostMeta, getValueTone } from '../lib/view-models.js';
 import { EmptyState, ScopeToggle, StatCard, StatusBadge } from './common.jsx';
 
@@ -433,7 +434,7 @@ export function CsvImportPreviewSheet({
             </div>
             <div className="list-card-meta">
               <span>税额合计 {taxTotal ? formatMoney(-taxTotal) : '无'}</span>
-              <span>税务明细 {summary.matchedTaxDetailRows || 0}/{summary.taxDetailRows || 0}</span>
+              <span>现物明细 {summary.matchedTaxDetailRows || 0}/{summary.taxDetailRows || 0}</span>
               <span>投信导入 {summary.importedInvestmentTrustRows || 0} 行</span>
               <span>現引转换 {summary.importedConversionRows || 0} 行</span>
               {summary.skippedInvestmentTrust ? <span>忽略投信 {summary.skippedInvestmentTrust} 行</span> : null}
@@ -613,33 +614,6 @@ export function ManualDaySheet({
 
 function tradeNeedsReview(duplicates, orphans) {
   return duplicates.length > 0 || orphans.length > 0;
-}
-
-export function DividendRuleSheet({ state, onCancel, onChange, onSave }) {
-  return (
-    <Sheet
-      open={state.open}
-      onClose={onCancel}
-      title={state.target === 'margin' ? '修改信用分红比例' : '修改现物分红比例'}
-      actions={(
-        <>
-          <button type="button" className="ghost-btn" onClick={onCancel}>取消</button>
-          <button type="button" className="primary-btn" onClick={onSave}>保存</button>
-        </>
-      )}
-    >
-      <div className="form-grid two ratio-grid">
-        <label className="field-group">
-          <span className="form-label">分子</span>
-          <input type="number" min="1" step="1" className="form-input" value={state.numerator} onChange={(event) => onChange('numerator', event.target.value)} />
-        </label>
-        <label className="field-group">
-          <span className="form-label">分母</span>
-          <input type="number" min="1" step="1" className="form-input" value={state.denominator} onChange={(event) => onChange('denominator', event.target.value)} />
-        </label>
-      </div>
-    </Sheet>
-  );
 }
 
 export function ConfirmSheet({ state, onCancel, onConfirm }) {

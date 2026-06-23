@@ -4,6 +4,9 @@ import {
   POST_LOGIN_SYNC_KEY
 } from './constants.js';
 import { maskEmail, trimText } from './utils.js';
+import * as appMod from 'firebase/app';
+import * as authMod from 'firebase/auth';
+import * as firestoreMod from 'firebase/firestore/lite';
 
 const APP_NAME = 'trade-ledger-cloud';
 
@@ -153,12 +156,6 @@ function isSameProject(leftOptions = {}, rightConfig = {}) {
 }
 
 async function loadFirebaseRuntimeModules() {
-  const [appMod, authMod, firestoreMod] = await Promise.all([
-    import('firebase/app'),
-    import('firebase/auth'),
-    import('firebase/firestore/lite')
-  ]);
-
   return { appMod, authMod, firestoreMod };
 }
 

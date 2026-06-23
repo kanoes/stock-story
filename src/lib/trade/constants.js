@@ -9,7 +9,6 @@ export const DB_NAME = 'tradediary_db_local_v41';
 export const DB_VERSION = 1;
 export const STORE_NAME = 'days';
 
-export const DIVIDEND_START_DATE = '2026-04-01';
 export const RECORDS_PAGE_SIZE = 8;
 export const MARGIN_INTEREST_RATE = 0.028;
 export const DAYS_IN_YEAR = 365;
@@ -18,7 +17,6 @@ export const TAB_ITEMS = [
   { id: 'home', label: '总览', icon: 'home' },
   { id: 'records', label: '记录', icon: 'list' },
   { id: 'analysis', label: '分析', icon: 'bars' },
-  { id: 'dividend', label: '分红', icon: 'gift' },
   { id: 'settings', label: '设置', icon: 'gear' }
 ];
 

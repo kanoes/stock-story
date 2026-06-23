@@ -1,5 +1,5 @@
 import { MANUAL_TYPE_MAP } from './constants.js';
-import { cloneActiveRuleSnapshot, createDefaultSettings, normalizeRuleSnapshot } from './settings.js';
+import { createDefaultSettings } from './settings.js';
 import {
   compactText,
   compareByDateAsc,
@@ -12,10 +12,6 @@ import {
   todayStr,
   trimText
 } from './utils.js';
-
-function resolveSettings(settings) {
-  return settings || createDefaultSettings();
-}
 
 function normalizeOptionalNumber(value) {
   return value === '' ? '' : (safeNumber(value) ?? '');
@@ -113,7 +109,6 @@ export function isTradeComplete(trade) {
 }
 
 export function createManualTrade(settings, preset = {}) {
-  const nextSettings = resolveSettings(settings);
   const manualType = preset.manualType || 'spot_buy';
   const config = MANUAL_TYPE_MAP[manualType] || MANUAL_TYPE_MAP.spot_buy;
   const now = new Date().toISOString();
@@ -146,9 +141,8 @@ export function createManualTrade(settings, preset = {}) {
     positionEffect: config.positionEffect,
     positionSide: config.positionSide,
     tradeTypeLabel: config.tradeTypeLabel,
-    ratioSnapshot: preset.ratioSnapshot || cloneActiveRuleSnapshot(nextSettings, config.assetType),
     order: preset.order ?? 0
-  }, preset.date || todayStr(), Number(preset.order) || 0, nextSettings);
+  }, preset.date || todayStr(), Number(preset.order) || 0, settings);
 }
 
 export function normalizeTrade(trade, dayDate, index = 0, settings = createDefaultSettings()) {
@@ -164,7 +158,6 @@ export function normalizeTrade(trade, dayDate, index = 0, settings = createDefau
   const config = MANUAL_TYPE_MAP[fallbackManualType] || MANUAL_TYPE_MAP.spot_buy;
   const symbol = compactText(raw.symbol || raw.code || '');
   const assetType = raw.assetType || config.assetType;
-  const nextSettings = resolveSettings(settings);
 
   return {
     id: raw.id || generateId(),
@@ -198,8 +191,7 @@ export function normalizeTrade(trade, dayDate, index = 0, settings = createDefau
     fingerprint: trimText(raw.fingerprint || ''),
     csvBaseSignature: trimText(raw.csvBaseSignature || ''),
     marginSettlement: normalizeMarginSettlement(raw.marginSettlement),
-    taxDetail: normalizeTaxDetail(raw.taxDetail),
-    ratioSnapshot: normalizeRuleSnapshot(raw.ratioSnapshot || cloneActiveRuleSnapshot(nextSettings, assetType), assetType)
+    taxDetail: normalizeTaxDetail(raw.taxDetail)
   };
 }
 
@@ -310,8 +302,7 @@ export function mergeTradeVersions(existingTrade, incomingTrade, date, settings 
     fingerprint: preferred.fingerprint || secondary.fingerprint,
     csvBaseSignature: preferred.csvBaseSignature || secondary.csvBaseSignature,
     marginSettlement: preferred.marginSettlement || secondary.marginSettlement || null,
-    taxDetail: preferred.taxDetail || secondary.taxDetail || null,
-    ratioSnapshot: preferred.ratioSnapshot || secondary.ratioSnapshot || cloneActiveRuleSnapshot(settings, preferred.assetType)
+    taxDetail: preferred.taxDetail || secondary.taxDetail || null
   }, date, Number(preferred.order) || 0, settings);
 }
 
